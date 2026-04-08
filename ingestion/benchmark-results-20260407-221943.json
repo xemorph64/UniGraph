@@ -1,0 +1,52 @@
+﻿[
+    {
+        "value":  [
+                      "\n=== Running profile: baseline ===",
+                      {
+                          "profile":  "baseline",
+                          "run_id":  "BENCH-1775580522-fa78195f",
+                          "count":  5000,
+                          "publish_duration_ms":  132.85,
+                          "enriched_received":  5000,
+                          "rule_received":  5000,
+                          "throughput_tps":  3095.81,
+                          "latency_ms":  {
+                                             "p50":  912.94,
+                                             "p95":  1506.56,
+                                             "p99":  1547.13,
+                                             "mean":  889.03,
+                                             "max":  1557.59
+                                         },
+                          "status":  "PASS",
+                          "missing_enriched":  0,
+                          "missing_rule":  0
+                      }
+                  ],
+        "Count":  2
+    },
+    {
+        "value":  [
+                      "\n=== Running profile: optimized ===",
+                      {
+                          "profile":  "optimized",
+                          "run_id":  "BENCH-1775580578-e10c26ae",
+                          "count":  5000,
+                          "publish_duration_ms":  243.6,
+                          "enriched_received":  5000,
+                          "rule_received":  5000,
+                          "throughput_tps":  4198.63,
+                          "latency_ms":  {
+                                             "p50":  536.13,
+                                             "p95":  1042.81,
+                                             "p99":  1091.3,
+                                             "mean":  549.43,
+                                             "max":  1098.82
+                                         },
+                          "status":  "PASS",
+                          "missing_enriched":  0,
+                          "missing_rule":  0
+                      }
+                  ],
+        "Count":  2
+    }
+]

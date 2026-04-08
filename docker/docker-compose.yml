@@ -1,0 +1,331 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - unigraph-network
+
+  kafka-1:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-1
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:19092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092,PLAINTEXT_HOST://localhost:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports:
+      - "9092:9092"
+      - "19092:19092"
+    volumes:
+      - kafka_data_1:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks:
+      - unigraph-network
+
+  kafka-2:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-2
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:19093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9093,PLAINTEXT_HOST://localhost:19093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports:
+      - "9093:9093"
+      - "19093:19093"
+    volumes:
+      - kafka_data_2:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9093"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks:
+      - unigraph-network
+
+  kafka-3:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-3
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9094,PLAINTEXT_HOST://0.0.0.0:19094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:9094,PLAINTEXT_HOST://localhost:19094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports:
+      - "9094:9094"
+      - "19094:19094"
+    volumes:
+      - kafka_data_3:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9094"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks:
+      - unigraph-network
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    container_name: schema-registry
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka-1:9092,PLAINTEXT://kafka-2:9093,PLAINTEXT://kafka-3:9094
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/subjects"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks:
+      - unigraph-network
+
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: finacle_cbs
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts/postgres-init.sql:/docker-entrypoint-initdb.d/01-postgres-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d finacle_cbs"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - unigraph-network
+
+  debezium-connect:
+    image: debezium/connect:2.5
+    container_name: debezium-connect
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9093,kafka-3:9094
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: debezium_connect_configs
+      OFFSET_STORAGE_TOPIC: debezium_connect_offsets
+      STATUS_STORAGE_TOPIC: debezium_connect_statuses
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+    ports:
+      - "8083:8083"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8083/connectors"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks:
+      - unigraph-network
+
+  flink-jobmanager:
+    image: flink:1.18-scala_2.12-java11
+    container_name: flink-jobmanager
+    command: jobmanager
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: flink-jobmanager
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9093,kafka-3:9094
+      ENRICH_PARALLELISM: ${ENRICH_PARALLELISM:-12}
+      ANOMALY_PARALLELISM: ${ANOMALY_PARALLELISM:-12}
+      MIN_PAUSE_BETWEEN_CHECKPOINTS_MS: ${MIN_PAUSE_BETWEEN_CHECKPOINTS_MS:-5000}
+      ENABLE_UNALIGNED_CHECKPOINTS: ${ENABLE_UNALIGNED_CHECKPOINTS:-true}
+      ENRICH_STATE_BACKEND: ${ENRICH_STATE_BACKEND:-HASHMAP}
+      KAFKA_PRODUCER_LINGER_MS: ${KAFKA_PRODUCER_LINGER_MS:-2}
+      KAFKA_PRODUCER_COMPRESSION_TYPE: ${KAFKA_PRODUCER_COMPRESSION_TYPE:-lz4}
+    ports:
+      - "8082:8081"
+    expose:
+      - "8081"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/overview"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks:
+      - unigraph-network
+
+  flink-taskmanager:
+    image: flink:1.18-scala_2.12-java11
+    container_name: flink-taskmanager
+    command: taskmanager
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: flink-jobmanager
+      KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9093,kafka-3:9094
+      ENRICH_PARALLELISM: ${ENRICH_PARALLELISM:-12}
+      ANOMALY_PARALLELISM: ${ANOMALY_PARALLELISM:-12}
+      MIN_PAUSE_BETWEEN_CHECKPOINTS_MS: ${MIN_PAUSE_BETWEEN_CHECKPOINTS_MS:-5000}
+      ENABLE_UNALIGNED_CHECKPOINTS: ${ENABLE_UNALIGNED_CHECKPOINTS:-true}
+      ENRICH_STATE_BACKEND: ${ENRICH_STATE_BACKEND:-HASHMAP}
+      KAFKA_PRODUCER_LINGER_MS: ${KAFKA_PRODUCER_LINGER_MS:-2}
+      KAFKA_PRODUCER_COMPRESSION_TYPE: ${KAFKA_PRODUCER_COMPRESSION_TYPE:-lz4}
+      TASK_MANAGER_NUMBER_OF_TASK_SLOTS: 24
+    networks:
+      - unigraph-network
+
+  neo4j:
+    image: neo4j:5.15-enterprise
+    container_name: neo4j
+    environment:
+      NEO4J_AUTH: neo4j/unigraph_dev
+      NEO4J_PLUGINS: '["apoc","graph-data-science"]'
+      NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p unigraph_dev \"RETURN 1\""]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+    networks:
+      - unigraph-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - unigraph-network
+
+  cassandra:
+    image: cassandra:4.1
+    container_name: cassandra
+    ports:
+      - "9042:9042"
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e \"DESCRIBE KEYSPACES\""]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+    networks:
+      - unigraph-network
+
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: vault
+    command: server -dev -dev-root-token-id=root
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://localhost:8200
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault_data:/vault/file
+    healthcheck:
+      test: ["CMD-SHELL", "vault status"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks:
+      - unigraph-network
+
+networks:
+  unigraph-network:
+    name: unigraph-network
+    driver: bridge
+
+volumes:
+  neo4j_data:
+    name: neo4j_data
+  cassandra_data:
+    name: cassandra_data
+  kafka_data_1:
+    name: kafka_data_1
+  kafka_data_2:
+    name: kafka_data_2
+  kafka_data_3:
+    name: kafka_data_3
+  redis_data:
+    name: redis_data
+  vault_data:
+    name: vault_data
+  postgres_data:
+    name: postgres_data
