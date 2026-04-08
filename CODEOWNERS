@@ -1,0 +1,26 @@
+# Root - all 3 must review any root-level changes
+* @p1 @p2 @p3
+
+# Person 1 owns - Data & Infrastructure
+/docker/ @p1
+/kubernetes/ @p1
+/ci-cd/ @p1
+/ingestion/ @p1
+/graph/ @p1
+/rules/ @p1
+/monitoring/ @p1
+/scripts/ @p1
+/.env.example @p1
+
+# Person 2 owns - ML & Analytics
+/ml/ @p2
+
+# Person 3 owns - Application & Integration
+/backend/ @p3
+/frontend/ @p3
+/llm/ @p3
+/compliance/ @p3
+/contracts/ @p3
+
+# Shared contracts - all 3 must approve
+/contracts/kafka-schemas/ @p1 @p2 @p3
