@@ -8,6 +8,7 @@
 
 ## Table of Contents
 
+0. [Current Implementation Status (P1/P2/P3)](#current-implementation-status-p1p2p3)
 1. [Integration Strategy](#1-integration-strategy)
 2. [Person 1: Data & Infrastructure Lead](#2-person-1-data--infrastructure-lead)
 3. [Person 2: ML & Analytics Lead](#3-person-2-ml--analytics-lead)
@@ -16,6 +17,57 @@
 6. [Weekly Integration Cadence](#6-weekly-integration-cadence)
 7. [Git Workflow & CODEOWNERS](#7-git-workflow--codeowners)
 8. [Definition of Done](#8-definition-of-done)
+
+---
+
+## Current Implementation Status (P1/P2/P3)
+
+Status date: 2026-04-08
+
+### P1: Data & Infrastructure Lead
+
+Completed in this execution window:
+- Flink runtime image tags updated to Java 17 for both jobmanager and taskmanager in `docker/docker-compose.yml`.
+- Prerequisite documentation aligned to Java 17+ in `ingestion/README.md`.
+- Plan service matrix aligned to Java 17 runtime images in this file.
+- Ingestion services started successfully (Postgres, Kafka cluster, Schema Registry, Debezium, Flink).
+- Pipeline verification passed via `ingestion/verify_db_ingestion.py` with topics verified: raw-transactions, enriched-transactions, rule-violations.
+- Live stream verification completed via `ingestion/live_viewer.py` with RAW, ENRICHED, and VIOLATION events observed.
+
+Found during validation:
+- `transactions_inserts.sql` fails against current CDC table schema with: `INSERT has more expressions than target columns`.
+- Root cause: current `public.transactions` table (from `docker/init-scripts/postgres-init.sql`) has 10 columns, while `transactions_inserts.sql` positional inserts expect 24 values.
+
+Blocked:
+- Neo4j schema apply step is blocked until Docker daemon stability is restored.
+
+### P2: ML & Analytics Lead
+
+Current status:
+- Phase 1 implementation files already exist (`ml/requirements.txt`, `ml/data/synthetic_generator.py`, `ml/data/feature_engineering.py`).
+- No P2 code changes were executed in this run window.
+- Section 3.3 Test 1-2 execution and expected-output verification remain pending.
+
+### P3: Application & Integration Lead
+
+Current status:
+- Phase 1 implementation files already exist (`backend/requirements.txt`, `backend/app/config.py`, `backend/app/main.py`, `backend/app/auth/jwt_rbac.py`, `frontend/package.json`, `frontend/src/services/api.ts`, `frontend/src/store/authStore.ts`).
+- No P3 code changes were executed in this run window.
+- Section 4.3 Test 1-2 execution and expected-output verification remain pending.
+
+## Refined Agent Prompts (Safe Update Mode)
+
+### P1 Agent Prompt (Refined)
+
+> "Read `/UniGRAPH_3_Person_Implementation_Plan.md` Section 2. Implement Phase 1 (Foundation) by aligning existing files to spec without destructive overwrite: update `docker/docker-compose.yml` (12 services), `docker/init-scripts/` (`kafka-topics.sh`, `neo4j-schema.cypher`, `cassandra-init.cql`), `ci-cd/.github/workflows/build.yml`, and `.env.example`. Preserve valid existing repository changes and only modify deltas required by Section 2. After each file group, run the verification commands from Section 2.3 Test 5 (Docker Compose Health). If Docker daemon is unavailable, capture the exact blocker and continue with all non-daemon checks."
+
+### P2 Agent Prompt (Refined)
+
+> "Read `/UniGRAPH_3_Person_Implementation_Plan.md` Section 3. Implement Phase 1 (Foundation) by updating existing files to match spec: `ml/requirements.txt`, `ml/data/synthetic_generator.py` (all fraud type generators), and `ml/data/feature_engineering.py`. Do not overwrite unrelated logic that already satisfies the spec. After implementation, run Section 3.3 Tests 1-2 and verify outputs match expected shape and values. Report any mismatch with exact observed output."
+
+### P3 Agent Prompt (Refined)
+
+> "Read `/UniGRAPH_3_Person_Implementation_Plan.md` Section 4. Implement Phase 1 (Foundation) by updating existing files to match spec: `backend/requirements.txt`, `backend/app/config.py`, `backend/app/main.py`, `backend/app/auth/jwt_rbac.py`, `frontend/package.json`, `frontend/src/services/api.ts`, and `frontend/src/store/authStore.ts`. Preserve existing compatible code and only change gaps versus spec. After implementation, run Section 4.3 Tests 1-2 and verify outputs match expected responses."
 
 ---
 
@@ -89,8 +141,8 @@ scripts/
 | `kafka-3` | `confluentinc/cp-kafka:7.5.0` | 9094 | same |
 | `schema-registry` | `confluentinc/cp-schema-registry:7.5.0` | 8081 | `curl -f http://localhost:8081/subjects` |
 | `debezium-connect` | `debezium/connect:2.5` | 8083 | `curl -f http://localhost:8083/connectors` |
-| `flink-jobmanager` | `flink:1.18-scala_2.12-java11` | 8081 | `curl -f http://localhost:8081/overview` |
-| `flink-taskmanager` | `flink:1.18-scala_2.12-java11` | — | depends on jobmanager |
+| `flink-jobmanager` | `flink:1.18-scala_2.12-java17` | 8081 | `curl -f http://localhost:8081/overview` |
+| `flink-taskmanager` | `flink:1.18-scala_2.12-java17` | — | depends on jobmanager |
 | `neo4j` | `neo4j:5.15-enterprise` | 7474 (HTTP), 7687 (Bolt) | `cypher-shell -u neo4j -p unigraph_dev "RETURN 1"` |
 | `redis` | `redis:7-alpine` | 6379 | `redis-cli ping` |
 | `cassandra` | `cassandra:4.1` | 9042 | `cqlsh -e "DESCRIBE KEYSPACES"` |
