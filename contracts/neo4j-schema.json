@@ -1,0 +1,27 @@
+{
+  "nodes": [
+    "Account",
+    "Customer",
+    "Transaction",
+    "Device",
+    "IP",
+    "Alert"
+  ],
+  "relationships": [
+    "SENT",
+    "RECEIVED",
+    "OWNS",
+    "USED_DEVICE",
+    "FLAGGED_AS",
+    "LINKED_TO",
+    "TRANSFERRED_FROM",
+    "TRANSFERRED_TO"
+  ],
+  "primaryKeys": {
+    "Account": "id",
+    "Customer": "id",
+    "Transaction": "id",
+    "Device": "id",
+    "Alert": "id"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "type": "record",
+  "name": "MLScore",
+  "namespace": "unigraph.kafka",
+  "fields": [
+    { "name": "txn_id", "type": "string" },
+    { "name": "risk_score", "type": "double" },
+    { "name": "risk_level", "type": "string" },
+    { "name": "model_version", "type": "string" },
+    { "name": "shap_top3", "type": { "type": "array", "items": "string" }, "default": [] },
+    { "name": "scored_at", "type": "string" }
+  ]
+}

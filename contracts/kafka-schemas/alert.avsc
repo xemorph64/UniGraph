@@ -1,0 +1,15 @@
+{
+  "type": "record",
+  "name": "Alert",
+  "namespace": "unigraph.kafka",
+  "fields": [
+    { "name": "alert_id", "type": "string" },
+    { "name": "txn_id", "type": "string" },
+    { "name": "account_id", "type": "string" },
+    { "name": "risk_score", "type": "double" },
+    { "name": "risk_level", "type": "string" },
+    { "name": "status", "type": "string", "default": "OPEN" },
+    { "name": "reasons", "type": { "type": "array", "items": "string" }, "default": [] },
+    { "name": "created_at", "type": "string" }
+  ]
+}

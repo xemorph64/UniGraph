@@ -1,0 +1,36 @@
+{
+  "name": "ml-scoring-protocol",
+  "version": "1.0.0",
+  "request": {
+    "required": [
+      "txn_id",
+      "source_account",
+      "destination_account",
+      "amount",
+      "timestamp"
+    ],
+    "fields": {
+      "txn_id": "string",
+      "source_account": "string",
+      "destination_account": "string",
+      "amount": "double",
+      "timestamp": "datetime",
+      "graph_features": "object",
+      "rule_flags": "array<string>"
+    }
+  },
+  "response": {
+    "required": [
+      "txn_id",
+      "risk_score",
+      "risk_level"
+    ],
+    "fields": {
+      "txn_id": "string",
+      "risk_score": "double",
+      "risk_level": "string",
+      "ml_model_version": "string",
+      "shap_top3": "array<string>"
+    }
+  }
+}

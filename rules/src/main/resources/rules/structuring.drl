@@ -1,0 +1,10 @@
+package rules
+
+dialect "mvel"
+
+rule "structuring"
+when
+    eval(true)
+then
+    // Placeholder: detect repeated transactions just below reporting threshold.
+end

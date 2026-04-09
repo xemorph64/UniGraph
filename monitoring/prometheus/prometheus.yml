@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'backend'
+    static_configs:
+      - targets: ['localhost:8000']
+
+  - job_name: 'neo4j'
+    static_configs:
+      - targets: ['localhost:7474']
+
+  - job_name: 'flink-jobmanager'
+    static_configs:
+      - targets: ['localhost:8082']
