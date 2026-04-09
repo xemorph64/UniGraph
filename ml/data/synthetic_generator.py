@@ -1,9 +1,12 @@
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from datetime import datetime, timedelta
+from imblearn.over_sampling import SMOTE
 
 
 class SyntheticFraudGenerator:
@@ -63,7 +66,9 @@ class SyntheticFraudGenerator:
         Returns DataFrame with columns matching feature engineering spec.
         """
         self._date_range_days = date_range_days
-        self._start_ts = pd.Timestamp.utcnow().floor("min") - pd.Timedelta(days=date_range_days)
+        self._start_ts = pd.Timestamp.utcnow().floor("min") - pd.Timedelta(
+            days=date_range_days
+        )
 
         accounts = [f"ACC-{i:06d}" for i in range(1, num_accounts + 1)]
 
@@ -101,7 +106,9 @@ class SyntheticFraudGenerator:
                 amount = float(np.clip(self.rng.normal(4500, 2500), 100, 50000))
                 channel = self.rng.choice(["UPI", "IMPS", "CASH"], p=[0.7, 0.2, 0.1])
             else:
-                amount = float(np.clip(self.rng.lognormal(mean=8.1, sigma=0.8), 100, 200000))
+                amount = float(
+                    np.clip(self.rng.lognormal(mean=8.1, sigma=0.8), 100, 200000)
+                )
                 channel = self.rng.choice(["UPI", "IMPS", "NEFT"], p=[0.6, 0.3, 0.1])
 
             ts = self._random_timestamp(business_hour_bias=True)
@@ -137,7 +144,9 @@ class SyntheticFraudGenerator:
             ts0 = self._random_timestamp(business_hour_bias=False)
             ts = ts0 + pd.Timedelta(minutes=hop * 5)
             src, dst = chain[hop], chain[hop + 1]
-            amount = float(self.rng.uniform(50000, 90000) - hop * self.rng.uniform(500, 2000))
+            amount = float(
+                self.rng.uniform(50000, 90000) - hop * self.rng.uniform(500, 2000)
+            )
 
             rows.append(
                 self._build_row(
@@ -145,7 +154,9 @@ class SyntheticFraudGenerator:
                     from_account=src,
                     to_account=dst,
                     amount=max(amount, 50000.0),
-                    channel=self.rng.choice(["IMPS", "RTGS", "NEFT"], p=[0.45, 0.35, 0.20]),
+                    channel=self.rng.choice(
+                        ["IMPS", "RTGS", "NEFT"], p=[0.45, 0.35, 0.20]
+                    ),
                     timestamp=ts,
                     is_fraud=1,
                     fraud_type="rapid_layering",
@@ -176,7 +187,9 @@ class SyntheticFraudGenerator:
                     from_account=src,
                     to_account=dst,
                     amount=amount,
-                    channel=self.rng.choice(["NEFT", "RTGS", "IMPS"], p=[0.45, 0.45, 0.10]),
+                    channel=self.rng.choice(
+                        ["NEFT", "RTGS", "IMPS"], p=[0.45, 0.45, 0.10]
+                    ),
                     timestamp=ts,
                     is_fraud=1,
                     fraud_type="structuring",
@@ -197,7 +210,9 @@ class SyntheticFraudGenerator:
             leg = int(self.rng.randint(0, 3))
             src = ring[leg]
             dst = ring[(leg + 1) % 3]
-            ts = self._random_timestamp(business_hour_bias=False) + pd.Timedelta(minutes=leg * 20)
+            ts = self._random_timestamp(business_hour_bias=False) + pd.Timedelta(
+                minutes=leg * 20
+            )
             amount = float(self.rng.uniform(60000, 250000))
 
             rows.append(
@@ -206,7 +221,9 @@ class SyntheticFraudGenerator:
                     from_account=src,
                     to_account=dst,
                     amount=amount,
-                    channel=self.rng.choice(["IMPS", "NEFT", "RTGS"], p=[0.5, 0.3, 0.2]),
+                    channel=self.rng.choice(
+                        ["IMPS", "NEFT", "RTGS"], p=[0.5, 0.3, 0.2]
+                    ),
                     timestamp=ts,
                     is_fraud=1,
                     fraud_type="round_tripping",
@@ -235,7 +252,9 @@ class SyntheticFraudGenerator:
                     from_account=src,
                     to_account=dst,
                     amount=float(self.rng.uniform(120000, 950000)),
-                    channel=self.rng.choice(["IMPS", "RTGS", "SWIFT"], p=[0.4, 0.4, 0.2]),
+                    channel=self.rng.choice(
+                        ["IMPS", "RTGS", "SWIFT"], p=[0.4, 0.4, 0.2]
+                    ),
                     timestamp=ts,
                     is_fraud=1,
                     fraud_type="dormant_awakening",
@@ -257,7 +276,9 @@ class SyntheticFraudGenerator:
     def _generate_fraud_mule(self, num: int, accounts: list) -> pd.DataFrame:
         """Fraud type: mule network — shared device/IP."""
         rows: list[dict[str, Any]] = []
-        mule_accounts = list(self.rng.choice(accounts, size=min(5, len(accounts)), replace=False))
+        mule_accounts = list(
+            self.rng.choice(accounts, size=min(5, len(accounts)), replace=False)
+        )
         for _ in range(num):
             src = self.rng.choice(mule_accounts)
             dst = self.rng.choice(accounts)
@@ -271,7 +292,9 @@ class SyntheticFraudGenerator:
                     from_account=src,
                     to_account=dst,
                     amount=float(self.rng.uniform(20000, 450000)),
-                    channel=self.rng.choice(["UPI", "IMPS", "NEFT"], p=[0.25, 0.55, 0.20]),
+                    channel=self.rng.choice(
+                        ["UPI", "IMPS", "NEFT"], p=[0.25, 0.55, 0.20]
+                    ),
                     timestamp=ts,
                     is_fraud=1,
                     fraud_type="mule_network",
@@ -284,12 +307,64 @@ class SyntheticFraudGenerator:
             )
         return pd.DataFrame(rows, columns=self.OUTPUT_COLUMNS)
 
-    def apply_smote(self, df: pd.DataFrame, target_col: str = "is_fraud") -> pd.DataFrame:
+    def _random_timestamp(self, business_hour_bias: bool = True) -> pd.Timestamp:
+        if self._start_ts is None:
+            self._start_ts = pd.Timestamp.utcnow().floor("min") - pd.Timedelta(
+                days=self._date_range_days
+            )
+
+        total_minutes = int(self.rng.randint(0, self._date_range_days * 24 * 60))
+
+        if business_hour_bias:
+            hour = self.rng.choice(24, p=self._business_hour_probs())
+        else:
+            hour = self.rng.randint(0, 24)
+
+        minute = self.rng.randint(0, 60)
+        ts = self._start_ts + pd.Timedelta(minutes=total_minutes)
+        ts = ts.replace(hour=hour, minute=minute)
+        return ts
+
+    def _business_hour_probs(self):
+        probs = np.array(
+            [
+                0.01,
+                0.005,
+                0.005,
+                0.005,
+                0.005,
+                0.01,
+                0.02,
+                0.04,
+                0.07,
+                0.09,
+                0.10,
+                0.10,
+                0.08,
+                0.07,
+                0.08,
+                0.09,
+                0.08,
+                0.06,
+                0.04,
+                0.03,
+                0.02,
+                0.02,
+                0.015,
+                0.01,
+            ]
+        )
+        return probs / probs.sum()
+
+    def _txn_id(self) -> str:
+        return f"TXN-{datetime.now().year}-{self.rng.randint(100000, 999999)}"
+
+    def apply_smote(
+        self, df: pd.DataFrame, target_col: str = "is_fraud"
+    ) -> pd.DataFrame:
         """Apply SMOTE to balance classes for tabular features."""
         if target_col not in df.columns:
             raise ValueError(f"Target column '{target_col}' not found in DataFrame")
-
-        from imblearn.over_sampling import SMOTE
 
         y = df[target_col]
         X = pd.get_dummies(df.drop(columns=[target_col]), drop_first=False)
@@ -309,8 +384,12 @@ class SyntheticFraudGenerator:
         metadata = {
             "rows": int(df.shape[0]),
             "columns": list(df.columns),
-            "class_distribution": df["is_fraud"].value_counts().to_dict() if "is_fraud" in df.columns else {},
-            "fraud_type_distribution": df["fraud_type"].value_counts().to_dict() if "fraud_type" in df.columns else {},
+            "class_distribution": df["is_fraud"].value_counts().to_dict()
+            if "is_fraud" in df.columns
+            else {},
+            "fraud_type_distribution": df["fraud_type"].value_counts().to_dict()
+            if "fraud_type" in df.columns
+            else {},
         }
 
         metadata_path = output_path.with_suffix(".metadata.json")
@@ -339,14 +418,38 @@ class SyntheticFraudGenerator:
         min_txn_amount: float | None = None,
     ) -> dict[str, Any]:
         customer_age = int(self.rng.randint(21, 75))
-        acct_age = int(account_age_days if account_age_days is not None else self.rng.randint(30, 3650))
+        acct_age = int(
+            account_age_days
+            if account_age_days is not None
+            else self.rng.randint(30, 3650)
+        )
         avg_balance = float(self.rng.uniform(10000, 1500000))
-        txn_count_30d = int(transaction_count_30d if transaction_count_30d is not None else self.rng.randint(2, 90))
+        txn_count_30d = int(
+            transaction_count_30d
+            if transaction_count_30d is not None
+            else self.rng.randint(2, 90)
+        )
 
-        avg_amount = float(avg_txn_amount if avg_txn_amount is not None else max(200.0, amount * self.rng.uniform(0.2, 0.8)))
-        std_amount = float(std_txn_amount if std_txn_amount is not None else max(50.0, avg_amount * self.rng.uniform(0.1, 0.9)))
-        max_amount = float(max_txn_amount if max_txn_amount is not None else max(amount, avg_amount + 3 * std_amount))
-        min_amount = float(min_txn_amount if min_txn_amount is not None else max(10.0, avg_amount - 2 * std_amount))
+        avg_amount = float(
+            avg_txn_amount
+            if avg_txn_amount is not None
+            else max(200.0, amount * self.rng.uniform(0.2, 0.8))
+        )
+        std_amount = float(
+            std_txn_amount
+            if std_txn_amount is not None
+            else max(50.0, avg_amount * self.rng.uniform(0.1, 0.9))
+        )
+        max_amount = float(
+            max_txn_amount
+            if max_txn_amount is not None
+            else max(amount, avg_amount + 3 * std_amount)
+        )
+        min_amount = float(
+            min_txn_amount
+            if min_txn_amount is not None
+            else max(10.0, avg_amount - 2 * std_amount)
+        )
 
         holiday_chance = 0.03
         dow = int(timestamp.dayofweek)
@@ -377,58 +480,12 @@ class SyntheticFraudGenerator:
             "day_of_week": dow,
             "is_weekend": is_weekend,
             "is_holiday": int(self.rng.rand() < holiday_chance),
-            "geo_distance_from_home": round(float(np.clip(self.rng.exponential(scale=12.0), 0.1, 3000.0)), 3),
+            "geo_distance_from_home": round(
+                float(np.clip(self.rng.exponential(scale=12.0), 0.1, 3000.0)), 3
+            ),
             "device_risk_flag": int(device_risk_flag),
             "device_account_count": int(device_account_count),
             "counterparty_risk_score": round(float(counterparty_risk_score), 4),
             "is_international": int(is_international),
             "channel_switch_count": int(channel_switch_count),
         }
-
-    def _random_timestamp(self, business_hour_bias: bool) -> pd.Timestamp:
-        if self._start_ts is None:
-            self._start_ts = pd.Timestamp.utcnow().floor("min") - pd.Timedelta(days=self._date_range_days)
-
-        day_offset = int(self.rng.randint(0, self._date_range_days))
-        base_day = self._start_ts + pd.Timedelta(days=day_offset)
-
-        if business_hour_bias:
-            hour = int(self.rng.choice(np.arange(24), p=self._hour_distribution_business()))
-        else:
-            hour = int(self.rng.randint(0, 24))
-
-        minute = int(self.rng.randint(0, 60))
-        second = int(self.rng.randint(0, 60))
-        return base_day + pd.Timedelta(hours=hour, minutes=minute, seconds=second)
-
-    def _hour_distribution_business(self) -> np.ndarray:
-        weights = np.array([
-            0.01,
-            0.005,
-            0.005,
-            0.005,
-            0.005,
-            0.01,
-            0.015,
-            0.03,
-            0.06,
-            0.08,
-            0.09,
-            0.09,
-            0.09,
-            0.08,
-            0.08,
-            0.07,
-            0.06,
-            0.05,
-            0.04,
-            0.03,
-            0.02,
-            0.015,
-            0.01,
-            0.01,
-        ])
-        return weights / weights.sum()
-
-    def _txn_id(self) -> str:
-        return f"TXN-{self.rng.randint(2026000000, 2026999999)}"

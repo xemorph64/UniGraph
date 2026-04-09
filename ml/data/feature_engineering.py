@@ -1,13 +1,13 @@
-from datetime import datetime, timezone
-from typing import Any
-
 import numpy as np
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 
 class FeatureEngineer:
-    def __init__(self, neo4j_driver, redis_client):
+    def __init__(self, neo4j_driver=None, redis_client=None):
         self.neo4j = neo4j_driver
         self.redis = redis_client
+        self._account_history = {}
 
     def extract_transaction_features(self, txn: dict) -> dict:
         """Extract per-transaction features."""
@@ -16,14 +16,14 @@ class FeatureEngineer:
             "velocity_1h": self._velocity(txn, window_hours=1),
             "velocity_6h": self._velocity(txn, window_hours=6),
             "velocity_24h": self._velocity(txn, window_hours=24),
-            "hour_sin": np.sin(2 * np.pi * txn["hour"] / 24),
-            "hour_cos": np.cos(2 * np.pi * txn["hour"] / 24),
-            "day_sin": np.sin(2 * np.pi * txn["day_of_week"] / 7),
-            "day_cos": np.cos(2 * np.pi * txn["day_of_week"] / 7),
+            "hour_sin": np.sin(2 * np.pi * txn.get("hour", 0) / 24),
+            "hour_cos": np.cos(2 * np.pi * txn.get("hour", 0) / 24),
+            "day_sin": np.sin(2 * np.pi * txn.get("day_of_week", 0) / 7),
+            "day_cos": np.cos(2 * np.pi * txn.get("day_of_week", 0) / 7),
             "geo_distance": self._geo_distance(txn),
             "channel_switch_count": self._channel_switches(txn),
             "counterparty_risk": self._counterparty_risk(txn),
-            "amount_to_avg_ratio": txn["amount"] / self._avg_amount(txn),
+            "amount_to_avg_ratio": txn["amount"] / max(self._avg_amount(txn), 1.0),
             "is_round_amount": self._is_round_amount(txn["amount"]),
             "time_since_last_txn": self._time_since_last(txn),
         }
@@ -57,6 +57,8 @@ class FeatureEngineer:
             "max_txn_amount_30d": self._max_txn_amount(account_id),
             "device_count_30d": self._device_count(account_id),
             "ip_count_30d": self._ip_count(account_id),
+            "min_txn_amount_30d": self._min_txn_amount(account_id),
+            "median_txn_amount_30d": self._median_txn_amount(account_id),
         }
 
     def build_feature_vector(self, txn: dict) -> dict:
@@ -64,74 +66,48 @@ class FeatureEngineer:
         account_id = txn["from_account"]
         features = {}
         features.update(self.extract_transaction_features(txn))
-        features.update(self.extract_graph_features(account_id))
-        account_features = self.extract_account_features(account_id)
-        for key in (
-            "account_age_days",
-            "kyc_tier",
-            "is_dormant",
-            "dormant_days",
-            "avg_monthly_balance",
-        ):
-            features[key] = account_features[key]
+        if self.neo4j is not None:
+            features.update(self.extract_graph_features(account_id))
+        features.update(self.extract_account_features(account_id))
         return features
 
     def _amount_zscore(self, txn: dict) -> float:
-        avg = float(txn.get("avg_txn_amount", txn.get("amount", 0.0)))
-        std = float(txn.get("std_txn_amount", max(avg * 0.25, 1.0)))
-        return float((float(txn["amount"]) - avg) / max(std, 1e-6))
+        account_id = txn.get("from_account", "")
+        history = self._account_history.get(account_id, {})
+        mean = history.get("mean_amount", 50000.0)
+        std = history.get("std_amount", 25000.0)
+        if std == 0:
+            return 0.0
+        return (txn["amount"] - mean) / std
 
-    def _velocity(self, txn: dict, window_hours: int) -> int:
-        key = f"velocity:{txn['from_account']}:{window_hours}h"
-        if self.redis is not None:
-            value = self.redis.get(key)
-            if value is not None:
-                return int(value)
-
-        base_velocity = float(txn.get("transaction_count_30d", 0)) / 30.0
-        estimated = max(0, int(round(base_velocity * window_hours)))
-        return estimated
+    def _velocity(self, txn: dict, window_hours: int = 1) -> int:
+        account_id = txn.get("from_account", "")
+        history = self._account_history.get(account_id, {})
+        return history.get(f"velocity_{window_hours}h", 0)
 
     def _geo_distance(self, txn: dict) -> float:
-        if "geo_distance_from_home" in txn:
-            return float(txn["geo_distance_from_home"])
-
-        lat = float(txn.get("geo_lat", 0.0))
-        lon = float(txn.get("geo_lon", 0.0))
-        home_lat = float(txn.get("home_lat", lat))
-        home_lon = float(txn.get("home_lon", lon))
-
-        lat1, lon1, lat2, lon2 = map(np.radians, [lat, lon, home_lat, home_lon])
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
-        c = 2 * np.arcsin(np.sqrt(a))
-        return float(6371.0 * c)
+        return txn.get("geo_distance_from_home", 0.0)
 
     def _channel_switches(self, txn: dict) -> int:
-        if "channel_switch_count" in txn:
-            return int(txn["channel_switch_count"])
-
-        key = f"channel_switches:{txn['from_account']}"
-        if self.redis is not None:
-            value = self.redis.get(key)
-            if value is not None:
-                return int(value)
-        return 0
+        account_id = txn.get("from_account", "")
+        history = self._account_history.get(account_id, {})
+        return history.get("channel_switch_count", 0)
 
     def _counterparty_risk(self, txn: dict) -> float:
-        return float(txn.get("counterparty_risk_score", 0.0))
+        return txn.get("counterparty_risk_score", 0.0)
 
     def _avg_amount(self, txn: dict) -> float:
-        return max(float(txn.get("avg_txn_amount", txn["amount"])), 1.0)
+        account_id = txn.get("from_account", "")
+        history = self._account_history.get(account_id, {})
+        return history.get("mean_amount", 50000.0)
 
     def _is_round_amount(self, amount: float) -> int:
-        return int(float(amount) % 1000 == 0 or float(amount) % 500 == 0)
+        return int(amount % 1000 == 0)
 
     def _time_since_last(self, txn: dict) -> float:
-        ts = self._parse_ts(txn.get("timestamp"))
-        last_ts = self._parse_ts(txn.get("last_txn_timestamp"))
-        return float((ts - last_ts).total_seconds())
+        account_id = txn.get("from_account", "")
+        history = self._account_history.get(account_id, {})
+        return history.get("time_since_last_txn_minutes", 1440.0)
 
     def _get_pagerank(self, account_id: str) -> float:
         return self._neo4j_numeric(account_id, "pagerank", 0.0)
@@ -152,7 +128,7 @@ class FeatureEngineer:
         return int(self._neo4j_numeric(account_id, f"out_degree_{hours}h", 0))
 
     def _shortest_path_to_known_fraud(self, account_id: str) -> int:
-        return int(self._neo4j_numeric(account_id, "shortest_path_to_fraud", 99))
+        return int(self._neo4j_numeric(account_id, "shortest_path_to_fraud", -1))
 
     def _community_risk(self, account_id: str) -> float:
         return self._neo4j_numeric(account_id, "community_risk_score", 0.0)
@@ -195,6 +171,12 @@ class FeatureEngineer:
 
     def _ip_count(self, account_id: str) -> int:
         return int(self._neo4j_numeric(account_id, "ip_count_30d", 0))
+
+    def _min_txn_amount(self, account_id: str) -> float:
+        return self._neo4j_numeric(account_id, "min_txn_amount_30d", 0.0)
+
+    def _median_txn_amount(self, account_id: str) -> float:
+        return self._neo4j_numeric(account_id, "median_txn_amount_30d", 0.0)
 
     def _neo4j_numeric(self, account_id: str, key: str, default: float) -> float:
         if self.neo4j is None:
