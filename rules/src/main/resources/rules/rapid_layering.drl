@@ -1,0 +1,10 @@
+package rules
+
+dialect "mvel"
+
+rule "rapid_layering"
+when
+    eval(true)
+then
+    // Placeholder: detect >5 hops in <30 minutes with amount thresholds.
+end

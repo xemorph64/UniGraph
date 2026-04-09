@@ -1,0 +1,20 @@
+name: deploy-production
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and publish images
+        run: |
+          echo "Build and push production images here"
+      - name: Deploy to production cluster
+        run: |
+          echo "Apply production manifests here"

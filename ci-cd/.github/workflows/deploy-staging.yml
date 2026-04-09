@@ -1,0 +1,21 @@
+name: Deploy Staging
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate manifests
+        run: |
+          test -f kubernetes/overlays/staging/kustomization.yaml
+      - name: Build staging manifest
+        run: |
+          kubectl kustomize kubernetes/overlays/staging > /tmp/staging.yaml
+      - name: Deploy placeholder
+        run: |
+          echo "Staging deploy pipeline scaffold is ready."

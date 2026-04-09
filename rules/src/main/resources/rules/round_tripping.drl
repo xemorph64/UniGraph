@@ -1,0 +1,10 @@
+package rules
+
+dialect "mvel"
+
+rule "round_tripping"
+when
+    eval(true)
+then
+    // Placeholder: detect circular transfer paths returning to origin.
+end

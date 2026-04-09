@@ -1,0 +1,18 @@
+groups:
+  - name: unigraph.rules
+    rules:
+      - alert: FraudApiHighLatency
+        expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fraud API p99 latency is above 500ms"
+
+      - alert: Neo4jDown
+        expr: up{job='neo4j'} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Neo4j target is down"

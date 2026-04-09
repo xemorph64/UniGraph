@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "name": "RuleViolation",
+  "namespace": "unigraph.kafka",
+  "fields": [
+    { "name": "txn_id", "type": "string" },
+    { "name": "rule_code", "type": "string" },
+    { "name": "severity", "type": "int" },
+    { "name": "message", "type": "string" },
+    { "name": "detected_at", "type": "string" }
+  ]
+}

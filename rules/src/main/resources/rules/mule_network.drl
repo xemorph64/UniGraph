@@ -1,0 +1,10 @@
+package rules
+
+dialect "mvel"
+
+rule "mule_network"
+when
+    eval(true)
+then
+    // Placeholder: detect shared device/IP across multiple accounts.
+end

@@ -1,0 +1,88 @@
+openapi: 3.0.3
+info:
+  title: UniGRAPH Enforcement API
+  version: 1.0.0
+paths:
+  /api/v1/enforcement/lien:
+    post:
+      summary: Place lien on account
+      operationId: placeLien
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnforcementRequest'
+      responses:
+        '200':
+          description: Enforcement accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnforcementResponse'
+  /api/v1/enforcement/freeze:
+    post:
+      summary: Freeze account
+      operationId: freezeAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnforcementRequest'
+      responses:
+        '200':
+          description: Enforcement accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnforcementResponse'
+  /api/v1/enforcement/hold:
+    post:
+      summary: Hold transaction
+      operationId: holdTransaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnforcementRequest'
+      responses:
+        '200':
+          description: Enforcement accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnforcementResponse'
+components:
+  schemas:
+    EnforcementRequest:
+      type: object
+      required:
+        - reasonCode
+      properties:
+        accountId:
+          type: string
+        transactionId:
+          type: string
+        reasonCode:
+          type: string
+        comment:
+          type: string
+        requestedBy:
+          type: string
+        requiresMakerChecker:
+          type: boolean
+          default: true
+    EnforcementResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [ACCEPTED, REJECTED, PENDING_APPROVAL]
+        referenceId:
+          type: string
+        message:
+          type: string

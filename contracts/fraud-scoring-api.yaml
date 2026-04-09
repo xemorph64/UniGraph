@@ -1,0 +1,79 @@
+openapi: 3.0.3
+info:
+  title: UniGRAPH Fraud Scoring API
+  version: 1.0.0
+paths:
+  /api/v1/fraud/score:
+    post:
+      summary: Score a transaction for fraud risk
+      operationId: scoreTransaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FraudScoreRequest'
+      responses:
+        '200':
+          description: Fraud score response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudScoreResponse'
+components:
+  schemas:
+    FraudScoreRequest:
+      type: object
+      required:
+        - transactionId
+        - sourceAccount
+        - destinationAccount
+        - amount
+        - channel
+        - timestamp
+      properties:
+        transactionId:
+          type: string
+        sourceAccount:
+          type: string
+        destinationAccount:
+          type: string
+        amount:
+          type: number
+          format: double
+        channel:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        customerId:
+          type: string
+        deviceFingerprint:
+          type: string
+        ipAddress:
+          type: string
+    FraudScoreResponse:
+      type: object
+      required:
+        - transactionId
+        - riskScore
+        - riskLevel
+        - recommendation
+      properties:
+        transactionId:
+          type: string
+        riskScore:
+          type: number
+          format: double
+        riskLevel:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+        recommendation:
+          type: string
+          enum: [ALLOW, REVIEW, HOLD, BLOCK]
+        decisionLatencyMs:
+          type: integer
+        reasons:
+          type: array
+          items:
+            type: string

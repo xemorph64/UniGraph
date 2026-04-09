@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unigraph-ingestion
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unigraph-graph
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unigraph-ml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unigraph-backend
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unigraph-frontend
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unigraph-monitoring
