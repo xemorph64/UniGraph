@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 
+
 class Settings(BaseSettings):
     APP_ENV: str = "development"
     APP_DEBUG: bool = True
@@ -16,8 +17,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRY_MINUTES: int = 30
     ML_SERVICE_URL: str = "http://localhost:8002"
-    LLM_URL: str = "http://localhost:11434"
-    LLM_MODEL: str = "qwen3.5:9b"
+    LLM_URL: str = "https://api.groq.com/openai/v1"
+    LLM_MODEL: str = "llama-3.1-70b-versatile"
+    GROQ_API_KEY: str = ""
     FINACLE_API_URL: str = ""
     FINACLE_CLIENT_ID: str = ""
     FINACLE_CLIENT_SECRET: str = ""
@@ -28,5 +30,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+
 
 settings = Settings()
