@@ -1,20 +1,22 @@
-import { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import CytoscapeComponent from 'react-cytoscapejs'
 import cytoscape from 'cytoscape'
 import dagre from 'cytoscape-dagre'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
-import { api } from './services/api'
-import { useAuthStore } from './store/authStore'
+import { api, alertsApi, accountsApi, reportsApi } from './services/api'
 
 cytoscape.use(dagre)
 
 interface Alert {
-  alert_id: string
+  id: string
   risk_score: number
   account_id: string
   status: string
-  shap_summary: string
+  shap_top3: string[]
+  rule_flags: string[]
   created_at: string
+  risk_level: string
+  recommendation: string
 }
 
 interface Case {
@@ -25,20 +27,62 @@ interface Case {
   created_at: string
 }
 
+interface GraphData {
+  nodes: { data: { id: string; label: string; risk: number } }[]
+  edges: { data: { source: string; target: string; label: string } }[]
+}
+
 export default function App() {
   const [view, setView] = useState<'dashboard' | 'alerts' | 'graph' | 'cases'>('dashboard')
-  const { token } = useAuthStore()
-  
-  const [alerts, setAlerts] = useState<Alert[]>([
-    { alert_id: 'ALT-2026-00123', risk_score: 87, account_id: 'UBI30100012345678', status: 'OPEN', shap_summary: 'High velocity + shared device', created_at: '2026-04-10T14:23:01Z' },
-    { alert_id: 'ALT-2026-00122', risk_score: 92, account_id: 'UBI30100087654321', status: 'INVESTIGATING', shap_summary: 'Round trip pattern detected', created_at: '2026-04-10T12:45:00Z' },
-    { alert_id: 'ALT-2026-00121', risk_score: 65, account_id: 'UBI30100011223344', status: 'CLOSED', shap_summary: 'False positive', created_at: '2026-04-09T18:30:00Z' },
-  ])
-  
-  const [cases, setCases] = useState<Case[]>([
-    { case_id: 'CASE-2026-00456', title: 'Rapid Layering Investigation', priority: 'HIGH', status: 'OPEN', created_at: '2026-04-10T14:30:00Z' },
-    { case_id: 'CASE-2026-00455', title: 'Mule Network Detection', priority: 'CRITICAL', status: 'INVESTIGATING', created_at: '2026-04-10T11:00:00Z' },
-  ])
+  const [alerts, setAlerts] = useState<Alert[]>([])
+  const [cases, setCases] = useState<Case[]>([])
+  const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] })
+  const [selectedAccount, setSelectedAccount] = useState<string>('')
+  const [loading, setLoading] = useState(false)
+  const [strGenerating, setStrGenerating] = useState<string | null>(null)
+  const [generatedStr, setGeneratedStr] = useState<string>('')
+
+  useEffect(() => {
+    fetchAlerts()
+  }, [])
+
+  const fetchAlerts = async () => {
+    try {
+      const response = await alertsApi.list({})
+      setAlerts(response.data.items || [])
+    } catch (error) {
+      console.error('Failed to fetch alerts:', error)
+    }
+  }
+
+  const fetchGraph = async (accountId: string) => {
+    if (!accountId) return
+    setLoading(true)
+    try {
+      const response = await accountsApi.subgraph(accountId, { hops: 2 })
+      const nodes = (response.data.nodes || []).map((n: any) => ({
+        data: { id: n.id, label: n.id, risk: n.risk_score || 0 }
+      }))
+      const edges = (response.data.edges || []).map((e: any) => ({
+        data: { source: e.source, target: e.target, label: `₹${e.amount || 0}` }
+      }))
+      setGraphData({ nodes, edges })
+    } catch (error) {
+      console.error('Failed to fetch graph:', error)
+    }
+    setLoading(false)
+  }
+
+  const generateSTR = async (alertId: string) => {
+    setStrGenerating(alertId)
+    try {
+      const response = await reportsApi.generateSTR(alertId)
+      setGeneratedStr(response.data.narrative)
+    } catch (error) {
+      console.error('Failed to generate STR:', error)
+    }
+    setStrGenerating(null)
+  }
 
   const stats = {
     open: alerts.filter(a => a.status === 'OPEN').length,
@@ -56,29 +100,6 @@ export default function App() {
     { name: 'Sat', alerts: 5 },
     { name: 'Sun', alerts: 3 },
   ]
-
-  const sampleGraph = {
-    nodes: [
-      { data: { id: 'ACC-001', label: 'ACC-001', risk: 0 } },
-      { data: { id: 'ACC-002', label: 'ACC-002', risk: 85 } },
-      { data: { id: 'ACC-003', label: 'ACC-003', risk: 92 } },
-      { data: { id: 'ACC-004', label: 'ACC-004', risk: 45 } },
-    ],
-    edges: [
-      { data: { source: 'ACC-001', target: 'ACC-002', label: '₹75K' } },
-      { data: { source: 'ACC-002', target: 'ACC-003', label: '₹74K' } },
-      { data: { source: 'ACC-003', target: 'ACC-004', label: '₹73K' } },
-    ],
-  }
-
-  const nodeStyle = {
-    width: 60,
-    height: 60,
-    backgroundColor: '#3b82f6',
-    borderWidth: 2,
-    borderColor: '#fff',
-    label: 'data(label)',
-  }
 
   const getRiskColor = (score: number) => {
     if (score >= 90) return '#ef4444'
@@ -129,21 +150,21 @@ export default function App() {
               <th>Alert ID</th>
               <th>Risk Score</th>
               <th>Account</th>
-              <th>Summary</th>
+              <th>SHAP Summary</th>
               <th>Status</th>
             </tr>
           </thead>
           <tbody>
             {alerts.slice(0, 5).map(alert => (
-              <tr key={alert.alert_id}>
-                <td>{alert.alert_id}</td>
+              <tr key={alert.id}>
+                <td>{alert.id}</td>
                 <td>
                   <span className={`badge ${alert.risk_score >= 90 ? 'critical' : alert.risk_score >= 80 ? 'high' : 'medium'}`}>
                     {alert.risk_score}
                   </span>
                 </td>
                 <td>{alert.account_id}</td>
-                <td>{alert.shap_summary}</td>
+                <td>{alert.shap_top3?.join(', ') || '-'}</td>
                 <td>
                   <span className={`badge ${alert.status.toLowerCase()}`}>{alert.status}</span>
                 </td>
@@ -165,7 +186,8 @@ export default function App() {
               <th>Alert ID</th>
               <th>Risk Score</th>
               <th>Account</th>
-              <th>SHAP Summary</th>
+              <th>Risk Level</th>
+              <th>Rule Flags</th>
               <th>Status</th>
               <th>Created</th>
               <th>Actions</th>
@@ -173,63 +195,92 @@ export default function App() {
           </thead>
           <tbody>
             {alerts.map(alert => (
-              <tr key={alert.alert_id}>
-                <td>{alert.alert_id}</td>
+              <tr key={alert.id}>
+                <td>{alert.id}</td>
                 <td>
                   <span className={`badge ${alert.risk_score >= 90 ? 'critical' : alert.risk_score >= 80 ? 'high' : 'medium'}`}>
                     {alert.risk_score}
                   </span>
                 </td>
                 <td>{alert.account_id}</td>
-                <td>{alert.shap_summary}</td>
+                <td>{alert.risk_level}</td>
+                <td>{alert.rule_flags?.join(', ') || '-'}</td>
                 <td>
                   <span className={`badge ${alert.status.toLowerCase()}`}>{alert.status}</span>
                 </td>
-                <td>{new Date(alert.created_at).toLocaleDateString()}</td>
+                <td>{alert.created_at ? new Date(alert.created_at).toLocaleDateString() : '-'}</td>
                 <td>
-                  <button className="btn btn-primary" style={{ marginRight: '0.5rem' }}>View</button>
-                  <button className="btn btn-secondary">Investigate</button>
+                  <button className="btn btn-primary" style={{ marginRight: '0.5rem' }} onClick={() => { setSelectedAccount(alert.account_id); setView('graph'); }}>
+                    View Graph
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => generateSTR(alert.id)} disabled={strGenerating === alert.id}>
+                    {strGenerating === alert.id ? 'Generating...' : 'Generate STR'}
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {generatedStr && (
+        <div style={{ marginTop: '1rem', padding: '1rem', background: '#1e293b', borderRadius: '0.75rem' }}>
+          <h3 style={{ color: '#fff', marginBottom: '0.5rem' }}>Generated STR</h3>
+          <pre style={{ color: '#94a3b8', whiteSpace: 'pre-wrap', fontSize: '0.875rem' }}>{generatedStr}</pre>
+        </div>
+      )}
     </div>
   )
 
   const renderGraph = () => (
     <div>
       <h2 className="section-title">Graph Explorer</h2>
-      <div className="graph-container">
-        <CytoscapeComponent
-          elements={sampleGraph}
-          style={{ width: '100%', height: '500px' }}
-          layout={{ name: 'dagre', rankDir: 'LR' }}
-          stylesheet={[
-            {
-              selector: 'node',
-              style: {
-                'background-color': '#3b82f6',
-                'label': 'data(label)',
-                'color': '#fff',
-                'font-size': '12px',
-              }
-            },
-            {
-              selector: 'edge',
-              style: {
-                'width': 2,
-                'line-color': '#94a3b8',
-                'target-arrow-color': '#94a3b8',
-                'target-arrow-shape': 'triangle',
-                'label': 'data(label)',
-                'font-size': '10px',
-                'color': '#94a3b8',
-              }
-            }
-          ]}
+      <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem' }}>
+        <input 
+          type="text" 
+          placeholder="Enter account ID (e.g., ACC-LAYER-001)" 
+          value={selectedAccount}
+          onChange={(e) => setSelectedAccount(e.target.value)}
+          style={{ padding: '0.5rem', background: '#1e293b', border: '1px solid #334155', color: '#fff', borderRadius: '0.375rem', flex: 1 }}
         />
+        <button className="btn btn-primary" onClick={() => fetchGraph(selectedAccount)}>Load Graph</button>
+      </div>
+      <div className="graph-container">
+        {loading ? (
+          <div style={{ color: '#94a3b8', textAlign: 'center', padding: '2rem' }}>Loading graph...</div>
+        ) : graphData.nodes.length > 0 ? (
+          <CytoscapeComponent
+            elements={graphData}
+            style={{ width: '100%', height: '500px' }}
+            layout={{ name: 'dagre', rankDir: 'LR' }}
+            stylesheet={[
+              {
+                selector: 'node',
+                style: {
+                  'background-color': '#3b82f6',
+                  'label': 'data(label)',
+                  'color': '#fff',
+                  'font-size': '12px',
+                }
+              },
+              {
+                selector: 'edge',
+                style: {
+                  'width': 2,
+                  'line-color': '#94a3b8',
+                  'target-arrow-color': '#94a3b8',
+                  'target-arrow-shape': 'triangle',
+                  'label': 'data(label)',
+                  'font-size': '10px',
+                  'color': '#94a3b8',
+                }
+              }
+            ]}
+          />
+        ) : (
+          <div style={{ color: '#94a3b8', textAlign: 'center', padding: '2rem' }}>
+            Enter an account ID and click "Load Graph" to visualize the fraud network
+          </div>
+        )}
       </div>
     </div>
   )

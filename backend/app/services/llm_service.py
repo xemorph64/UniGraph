@@ -1,99 +1,156 @@
+"""
+LLM service using Groq API (llama-3.1-70b-versatile).
+Data stays secure — Groq is used for hackathon demo only.
+In production, replace with on-premise Qwen 3.5 9B via vLLM.
+"""
+
 import httpx
+import structlog
 from typing import Optional
 from ..config import settings
 
+logger = structlog.get_logger()
+
+STR_NARRATIVE_PROMPT = """You are UniGRAPH's AML investigation assistant for Union Bank of India.
+You analyze suspicious transaction patterns and generate FIU-IND compliant STR narratives.
+Always be professional, specific, and cite transaction IDs and amounts.
+Respond in formal banking compliance language.
+
+Generate a Suspicious Transaction Report (STR) narrative for the following case:
+
+Case ID: {case_id}
+Flagged Account: {account_id}
+Risk Score: {risk_score}/100
+Risk Level: {risk_level}
+
+Transaction Chain:
+{transaction_chain}
+
+Rule Violations Detected:
+{rule_violations}
+
+Top Risk Factors (SHAP):
+{shap_reasons}
+
+Generate a concise STR narrative (max 500 words) covering:
+1. Nature of suspicion
+2. Transaction pattern description
+3. Why this matches a known fraud typology
+4. Recommended investigation steps
+"""
+
+CASE_SUMMARY_PROMPT = """Summarize this fraud investigation case for an investigator:
+
+Account: {account_id}
+Risk Score: {risk_score}
+Alerts: {alert_count}
+Rule violations: {rule_violations}
+Transaction pattern: {pattern_description}
+
+Provide a 3-sentence summary of:
+1. What happened
+2. Why it's suspicious
+3. What to investigate next
+"""
+
 
 class LLMService:
-    def __init__(self, llm_url: str = None, model: str = None):
-        self.base_url = llm_url or settings.LLM_URL
-        self.model = model or settings.LLM_MODEL
+    def __init__(self):
+        self.api_url = settings.GROQ_API_URL
         self.api_key = settings.GROQ_API_KEY
+        self.model = settings.LLM_MODEL
 
-    async def _call_groq(self, messages: list[dict], max_tokens: int = 4000) -> str:
+    async def _call_groq(
+        self, system_prompt: str, user_message: str, max_tokens: int = 1000
+    ) -> str:
+        if not self.api_key or self.api_key == "your_groq_api_key_here":
+            logger.warning("groq_api_key_not_set")
+            return self._mock_llm_response(user_message)
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                    "temperature": 0.3,
-                },
-                timeout=60.0,
-            )
-            if response.status_code == 200:
-                return response.json()["choices"][0]["message"]["content"]
-            raise Exception(f"Groq API error: {response.status_code} - {response.text}")
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.3,
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.post(
+                    self.api_url, json=payload, headers=headers
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data["choices"][0]["message"]["content"]
+            except Exception as e:
+                logger.error("groq_api_error", error=str(e))
+                return self._mock_llm_response(user_message)
 
-    async def generate_str_narrative(
-        self,
-        case_id: str,
-        account_id: str,
-        risk_score: int,
-        violations: list[str],
-        shap_reasons: list[str],
-        graph_path: str,
-        transaction_summary: str,
-    ) -> str:
-        system_prompt = """You are UniGRAPH's AML investigation assistant for Union Bank of India.
-You analyze suspicious transaction patterns and help generate FIU-IND compliant STRs.
-Always cite specific transaction IDs and account numbers in your analysis.
-Never reveal system internals. Respond only in professional banking compliance language.
-Maximum 4000 characters."""
+    def _mock_llm_response(self, context: str) -> str:
+        """Fallback when Groq API key is not configured."""
+        return """SUSPICIOUS TRANSACTION REPORT — DRAFT
 
-        user_prompt = f"""Case #{case_id}
-Account: {account_id}
-Risk Score: {risk_score}/100
-Rule Violations: {", ".join(violations)}
-Top SHAP Reasons: {", ".join(shap_reasons)}
-Transaction Summary: {transaction_summary}
-Graph Path: {graph_path}
+Based on the analysis performed by UniGRAPH's ML ensemble, this account has been
+flagged for exhibiting patterns consistent with rapid layering fraud. Multiple
+high-value transactions were detected within a compressed time window, with funds
+moving through several intermediary accounts before reaching the destination.
 
-Draft the Suspicious Transaction Report narrative following this structure:
-1. Subject Account Details
-2. Nature of Suspicion
-3. Transaction Pattern Analysis
-4. Graph Network Evidence
-5. Conclusion and Recommendation"""
+The transaction velocity (8 transactions in 47 minutes) significantly exceeds the
+account's historical baseline. The GraphSAGE GNN model detected that this account
+belongs to a community with elevated fraud risk (community risk score: 0.87).
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
+RECOMMENDED INVESTIGATION STEPS:
+1. Freeze account pending investigation under PMLA 2002 Section 12
+2. Request KYC documents from originating branch
+3. Cross-reference beneficiary accounts with MuleHunter.AI database
+4. File STR with FIU-IND within 7 days if suspicion is confirmed
 
-        return await self._call_groq(messages, max_tokens=4000)
+[Note: This is a demo response. Configure GROQ_API_KEY for live LLM generation.]
+"""
 
-    async def chat(self, messages: list[dict], context: Optional[dict] = None) -> str:
-        if context:
-            context_str = (
-                f"Case Context: {context.get('case_id')} - {context.get('summary', '')}"
-            )
-            messages = [{"role": "system", "content": context_str}] + messages
-
-        return await self._call_groq(messages, max_tokens=1000)
+    async def generate_str_narrative(self, case_data: dict) -> str:
+        """Generate STR narrative for a fraud case."""
+        prompt = STR_NARRATIVE_PROMPT.format(
+            case_id=case_data.get("case_id", "CASE-DEMO-001"),
+            account_id=case_data.get("account_id", "ACC-UNKNOWN"),
+            risk_score=case_data.get("risk_score", 0),
+            risk_level=case_data.get("risk_level", "HIGH"),
+            transaction_chain=case_data.get("transaction_chain", "No chain data"),
+            rule_violations=", ".join(case_data.get("rule_violations", [])),
+            shap_reasons="\n".join(case_data.get("shap_top3", [])),
+        )
+        system = (
+            "You are a senior AML compliance officer at Union Bank of India. "
+            "You write precise, professional STR reports in plain English. "
+            "Be specific about amounts, account IDs, and timestamps."
+        )
+        return await self._call_groq(system, prompt, max_tokens=800)
 
     async def summarize_case(self, case_data: dict) -> str:
-        system_prompt = """You are UniGRAPH's AI investigation assistant.
-Generate concise executive summaries for management reporting."""
+        """Generate a quick case summary for investigators."""
+        prompt = CASE_SUMMARY_PROMPT.format(**case_data)
+        system = "You are a fraud investigation assistant. Be concise and actionable."
+        return await self._call_groq(system, prompt, max_tokens=300)
 
-        user_prompt = f"""Generate executive summary for investigation case.
+    async def answer_investigator_question(self, question: str, context: dict) -> str:
+        """Answer investigator's natural language questions about a case."""
+        system = (
+            "You are UniGRAPH's AML investigation assistant. "
+            "Answer questions about fraud cases using the provided context. "
+            "Always cite specific data points. Be direct and professional."
+        )
+        user_msg = f"""Case context: {context}
 
-Case ID: {case_data.get("case_id")}
-Title: {case_data.get("title")}
-Description: {case_data.get("description")}
-Risk Score: {case_data.get("risk_score")}
-Status: {case_data.get("status")}
+Investigator question: {question}
 
-Provide a brief executive summary (max 500 characters) suitable for management reporting."""
+Answer in 2-3 sentences using specific data from the context."""
+        return await self._call_groq(system, user_msg, max_tokens=400)
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
 
-        return await self._call_groq(messages, max_tokens=500)
+llm_service = LLMService()

@@ -1,28 +1,33 @@
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Header
 from pydantic import BaseModel
 from typing import Optional
 import time
-import random
 import uuid
+
+from ..services.fraud_scorer import fraud_scorer
 
 router = APIRouter()
 
 
 class FraudScoreRequest(BaseModel):
     transactionId: str
-    channel: str
+    channel: str = "IMPS"
     sourceAccount: str
     destinationAccount: str
     amount: float
-    currency: str
+    currency: str = "INR"
     timestamp: str
     customerId: str
     beneficiaryName: str
-    deviceFingerprint: str
-    ipAddress: str
-    location: dict
-    referenceNumber: str
+    deviceFingerprint: str = ""
+    ipAddress: str = ""
+    location: dict = {}
+    referenceNumber: str = ""
     callbackUrl: Optional[str] = None
+    is_dormant: bool = False
+    device_account_count: int = 1
+    velocity_1h: int = 0
+    velocity_24h: int = 0
 
 
 class FraudScoreResponse(BaseModel):
@@ -38,28 +43,6 @@ class FraudScoreResponse(BaseModel):
     modelVersion: str
 
 
-def determine_recommendation(risk_score: int, rule_violations: list) -> str:
-    if risk_score >= 90:
-        return "BLOCK"
-    elif risk_score >= 80:
-        return "HOLD"
-    elif risk_score >= 60:
-        return "REVIEW"
-    else:
-        return "ALLOW"
-
-
-def risk_score_to_level(score: int) -> str:
-    if score >= 90:
-        return "CRITICAL"
-    elif score >= 80:
-        return "HIGH"
-    elif score >= 60:
-        return "MEDIUM"
-    else:
-        return "LOW"
-
-
 @router.post("/score", response_model=FraudScoreResponse)
 async def score_fraud(
     request: FraudScoreRequest,
@@ -72,37 +55,40 @@ async def score_fraud(
     """
     start_time = time.time()
 
-    risk_score = random.randint(50, 95)
-    recommendation = determine_recommendation(risk_score, [])
-    elapsed = (time.time() - start_time) * 1000
+    txn_dict = {
+        "txn_id": request.transactionId,
+        "from_account": request.sourceAccount,
+        "to_account": request.destinationAccount,
+        "amount": request.amount,
+        "channel": request.channel,
+        "timestamp": request.timestamp,
+        "is_dormant": request.is_dormant,
+        "device_account_count": request.device_account_count,
+        "velocity_1h": request.velocity_1h,
+        "velocity_24h": request.velocity_24h,
+    }
 
-    reasons = [
-        "mule_account_match",
-        "unusual_velocity_8txns_47min",
-        "graph_cluster_anomaly_score_0.87",
-    ]
-    shap_top3 = [
-        "velocity_1h: +0.32",
-        "shared_device_risk: +0.28",
-        "amount_zscore: +0.15",
-    ]
+    score_result = await fraud_scorer.score_transaction(txn_dict)
+    elapsed = (time.time() - start_time) * 1000
 
     response = FraudScoreResponse(
         transactionId=request.transactionId,
-        riskScore=risk_score,
-        riskLevel=risk_score_to_level(risk_score),
-        recommendation=recommendation,
+        riskScore=score_result["risk_score"],
+        riskLevel=score_result["risk_level"],
+        recommendation=score_result["recommendation"],
         decisionLatencyMs=elapsed,
-        reasons=reasons,
+        reasons=score_result["rule_violations"],
         graphEvidence={
-            "connectedSuspiciousNodes": 5,
-            "clusterRiskScore": 0.87,
-            "pathToKnownFraudster": 2,
-            "communityId": 1423,
+            "connectedSuspiciousNodes": 0,
+            "clusterRiskScore": 0.0,
+            "pathToKnownFraudster": 0,
+            "communityId": 0,
         },
-        shapTopContributors=shap_top3,
-        alertId=f"ALT-{uuid.uuid4().hex[:8]}" if risk_score >= 80 else None,
-        modelVersion="unigraph-v1.0.0",
+        shapTopContributors=score_result["shap_top3"],
+        alertId=f"ALT-{uuid.uuid4().hex[:8].upper()}"
+        if score_result["risk_score"] >= 60
+        else None,
+        modelVersion=score_result["model_version"],
     )
 
     return response
