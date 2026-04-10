@@ -49,8 +49,8 @@ export const accountsApi = {
 };
 
 export const reportsApi = {
-  generateSTR: (caseId: string) => api.post('/reports/str/generate', { case_id: caseId }),
-  submitSTR: (caseId: string, data: any) => api.post(`/reports/str/${caseId}/submit`, data),
+  generateSTR: (alertId: string, caseNotes?: string) => api.post('/reports/str/generate', { alert_id: alertId, case_notes: caseNotes }),
+  submitSTR: (strId: string, data: any) => api.post(`/reports/str/${strId}/submit`, data),
 };
 
 export const fraudScoringApi = {

@@ -1,23 +1,23 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from typing import Optional
-from ..auth.jwt_rbac import require_permission, User
+from ..services.neo4j_service import neo4j_service
 
 router = APIRouter()
 
 
 class AlertResponse(BaseModel):
-    alert_id: str
-    txn_id: str
+    id: str
+    transaction_id: str
     account_id: str
-    risk_score: int
+    risk_score: float
     risk_level: str
     recommendation: str
-    shap_summary: str
+    shap_top3: list[str]
     rule_flags: list[str]
     status: str
-    created_at: str
-    assigned_to: Optional[str]
+    created_at: Optional[str] = None
+    assigned_to: Optional[str] = None
 
 
 @router.get("/")
@@ -26,24 +26,34 @@ async def list_alerts(
     page_size: int = Query(50, ge=1, le=500),
     status: Optional[str] = None,
     min_risk_score: Optional[int] = None,
-    account_id: Optional[str] = None,
-    user: User = Depends(require_permission("read:alerts")),
 ):
     """List alerts with pagination and filters."""
-    return {"items": [], "page": page, "page_size": page_size}
+    alerts = await neo4j_service.get_alerts(
+        status=status, min_risk_score=min_risk_score, limit=page_size
+    )
+    return {"items": alerts, "page": page, "page_size": page_size, "total": len(alerts)}
+
+
+@router.get("/{alert_id}")
+async def get_alert(alert_id: str):
+    """Get single alert by ID."""
+    alert = await neo4j_service.get_alert_by_id(alert_id)
+    if not alert:
+        return {"error": "Alert not found"}
+    return alert
 
 
 @router.post("/{alert_id}/acknowledge")
-async def acknowledge_alert(
-    alert_id: str, user: User = Depends(require_permission("write:alerts"))
-):
+async def acknowledge_alert(alert_id: str):
     """Investigator takes ownership of alert."""
-    return {"alert_id": alert_id, "status": "acknowledged", "assigned_to": user.user_id}
+    updated = await neo4j_service.update_alert_status(alert_id, "INVESTIGATING")
+    return {"alert_id": alert_id, "status": "INVESTIGATING", "assigned_to": "demo_user"}
 
 
 @router.post("/{alert_id}/escalate")
-async def escalate_alert(
-    alert_id: str, reason: str, user: User = Depends(require_permission("write:alerts"))
-):
+async def escalate_alert(alert_id: str, reason: str = ""):
     """Escalate alert to supervisor."""
-    return {"alert_id": alert_id, "status": "escalated", "reason": reason}
+    updated = await neo4j_service.update_alert_status(
+        alert_id, "ESCALATED", "SUPERVISOR"
+    )
+    return {"alert_id": alert_id, "status": "ESCALATED", "reason": reason}
