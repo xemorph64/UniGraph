@@ -189,7 +189,7 @@ services:
       - unigraph-network
 
   flink-jobmanager:
-    image: flink:1.18-scala_2.12-java11
+    image: flink:1.18-scala_2.12-java17
     container_name: flink-jobmanager
     command: jobmanager
     environment:
@@ -215,7 +215,7 @@ services:
       - unigraph-network
 
   flink-taskmanager:
-    image: flink:1.18-scala_2.12-java11
+    image: flink:1.18-scala_2.12-java17
     container_name: flink-taskmanager
     command: taskmanager
     depends_on:

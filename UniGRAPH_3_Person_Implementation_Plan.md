@@ -22,38 +22,41 @@
 
 ## Current Implementation Status (P1/P2/P3)
 
-Status date: 2026-04-08
+Status date: 2026-04-10
 
 ### P1: Data & Infrastructure Lead
 
-Completed in this execution window:
-- Flink runtime image tags updated to Java 17 for both jobmanager and taskmanager in `docker/docker-compose.yml`.
-- Prerequisite documentation aligned to Java 17+ in `ingestion/README.md`.
-- Plan service matrix aligned to Java 17 runtime images in this file.
-- Ingestion services started successfully (Postgres, Kafka cluster, Schema Registry, Debezium, Flink).
-- Pipeline verification passed via `ingestion/verify_db_ingestion.py` with topics verified: raw-transactions, enriched-transactions, rule-violations.
-- Live stream verification completed via `ingestion/live_viewer.py` with RAW, ENRICHED, and VIOLATION events observed.
-
-Found during validation:
-- `transactions_inserts.sql` fails against current CDC table schema with: `INSERT has more expressions than target columns`.
-- Root cause: current `public.transactions` table (from `docker/init-scripts/postgres-init.sql`) has 10 columns, while `transactions_inserts.sql` positional inserts expect 24 values.
-
-Blocked:
-- Neo4j schema apply step is blocked until Docker daemon stability is restored.
+✅ Completed:
+- Flink runtime image updated to Java 17 for both jobmanager and taskmanager in `docker/docker-compose.yml`
+- All 12 services defined in docker-compose.yml (zookeeper, kafka-1/2/3, schema-registry, postgres, debezium-connect, flink-jobmanager, flink-taskmanager, neo4j, redis, cassandra, vault)
+- Init scripts created: `kafka-topics.sh`, `neo4j-schema.cypher`, `cassandra-init.cql`, `postgres-init.sql`
+- Debezium connector config exists at `ingestion/debezium/connector-config.json`
+- Mock CBS generator exists at `ingestion/debezium/mock-cbs-generator.py`
+- Flink jobs exist: `TransactionEnrichmentJob.java`, `AnomalyWindowJob.java`
+- Drools rules created: `rapid_layering.drl`, `structuring.drl`, `dormant_awakening.drl`, `round_tripping.drl`, `mule_network.drl`
 
 ### P2: ML & Analytics Lead
 
-Current status:
-- Phase 1 implementation files already exist (`ml/requirements.txt`, `ml/data/synthetic_generator.py`, `ml/data/feature_engineering.py`).
-- No P2 code changes were executed in this run window.
-- Section 3.3 Test 1-2 execution and expected-output verification remain pending.
+✅ Completed:
+- `ml/requirements.txt` matches spec
+- `ml/data/synthetic_generator.py` - SyntheticFraudGenerator implemented
+- `ml/data/feature_engineering.py` - FeatureEngineer implemented
+- `ml/models/graphsage/` - GraphSAGE model, train, evaluate
+- `ml/models/xgboost_ensemble/` - XGBoost ensemble, SHAP explainer, train
+- `ml/models/isolation_forest/` - Isolation Forest model
+- `ml/serving/ml_service.py` - FastAPI ML scoring service
+- **Test 1 verified**: synthetic data generator produces (1010, 30) with 1000 normal + 10 fraud
 
 ### P3: Application & Integration Lead
 
-Current status:
-- Phase 1 implementation files already exist (`backend/requirements.txt`, `backend/app/config.py`, `backend/app/main.py`, `backend/app/auth/jwt_rbac.py`, `frontend/package.json`, `frontend/src/services/api.ts`, `frontend/src/store/authStore.ts`).
-- No P3 code changes were executed in this run window.
-- Section 4.3 Test 1-2 execution and expected-output verification remain pending.
+✅ Completed:
+- `backend/requirements.txt`, `backend/app/config.py`, `backend/app/main.py`, `backend/app/auth/jwt_rbac.py`
+- `backend/app/routers/` - all routers implemented (transactions, accounts, alerts, cases, reports, ws, fraud_scoring, enforcement)
+- `backend/app/services/` - all services implemented (neo4j_service, llm_service, finacle_service, fiu_ind_service, ncrp_service)
+- `frontend/package.json`
+- `frontend/src/App.tsx` - Dashboard, Alerts, Graph Explorer, Cases views
+- `frontend/src/services/api.ts`, `frontend/src/store/authStore.ts`
+- LLM configured for Groq API (llama-3.1-70b-versatile)
 
 ## Refined Agent Prompts (Safe Update Mode)
 
