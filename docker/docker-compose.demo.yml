@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # Core infrastructure - essential for the demo
+  # Core infrastructure
   neo4j:
     image: neo4j:5.15-enterprise
     container_name: unigraph-neo4j
@@ -19,6 +19,8 @@ services:
       interval: 20s
       timeout: 10s
       retries: 10
+    networks:
+      - unigraph-net
 
   redis:
     image: redis:7-alpine
@@ -32,7 +34,56 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+      - unigraph-net
+
+  # Backend API
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: unigraph-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=unigraph_dev
+      - REDIS_URL=redis://redis:6379/0
+      - DEMO_MODE=true
+      - DEMO_SEED_ON_STARTUP=true
+      - APP_CORS_ORIGINS=http://frontend:5173
+    env_file:
+      - ../.env
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../scripts:/scripts
+    networks:
+      - unigraph-net
+
+  # Frontend
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: unigraph-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://backend:8000
+    depends_on:
+      - backend
+    networks:
+      - unigraph-net
 
 volumes:
   neo4j_data:
   redis_data:
+
+networks:
+  unigraph-net:
+    driver: bridge

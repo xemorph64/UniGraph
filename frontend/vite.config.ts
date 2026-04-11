@@ -5,6 +5,8 @@ import {defineConfig, loadEnv} from 'vite';
 
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
+  const apiUrl = env.VITE_API_URL || 'http://localhost:8000';
+  
   return {
     plugins: [react(), tailwindcss()],
     define: {
@@ -19,11 +21,11 @@ export default defineConfig(({mode}) => {
       hmr: process.env.DISABLE_HMR !== 'true',
       proxy: {
         '^/health': {
-          target: 'http://localhost:8000',
+          target: apiUrl,
           changeOrigin: true,
         },
         '^/api/': {
-          target: 'http://localhost:8000',
+          target: apiUrl,
           changeOrigin: true,
         },
       },
