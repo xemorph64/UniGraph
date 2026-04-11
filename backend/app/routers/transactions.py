@@ -61,6 +61,43 @@ async def list_transactions(
     return {"items": [], "page": page, "page_size": page_size}
 
 
+@router.get("/recent")
+async def get_recent_transactions(limit: int = Query(20, ge=1, le=100)):
+    """Get recent transactions for real-time ticker."""
+    async with neo4j_service.driver.session() as session:
+        result = await session.run(
+            """
+            MATCH (t:Transaction)
+            RETURN t
+            ORDER BY t.timestamp DESC
+            LIMIT $limit
+        """,
+            limit=limit,
+        )
+
+        transactions = []
+        async for record in result:
+            t = dict(record["t"])
+            for k, v in t.items():
+                if hasattr(v, "isoformat"):
+                    t[k] = v.isoformat()
+
+            # Determine risk level from risk_score
+            risk_score = t.get("risk_score", 0)
+            if risk_score >= 80:
+                t["risk_level"] = "CRITICAL"
+            elif risk_score >= 60:
+                t["risk_level"] = "HIGH"
+            elif risk_score >= 40:
+                t["risk_level"] = "MEDIUM"
+            else:
+                t["risk_level"] = "LOW"
+
+            transactions.append(t)
+
+        return {"transactions": transactions}
+
+
 @router.post("/ingest", response_model=TransactionResponse)
 async def ingest_transaction(txn: TransactionIngest):
     """Ingest a transaction and run fraud scoring pipeline."""
