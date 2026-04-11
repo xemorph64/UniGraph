@@ -1,14 +1,14 @@
-import React, { useState, useEffect } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import CytoscapeComponent from 'react-cytoscapejs'
 import cytoscape from 'cytoscape'
 import dagre from 'cytoscape-dagre'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
-import { api, alertsApi, accountsApi, reportsApi } from './services/api'
+import { alertsApi, reportsApi } from './services/api'
 
 cytoscape.use(dagre)
 
-interface Alert {
+interface FraudAlert {
   id: string
+  transaction_id: string
   risk_score: number
   account_id: string
   status: string
@@ -19,58 +19,136 @@ interface Alert {
   recommendation: string
 }
 
-interface Case {
-  case_id: string
-  title: string
-  priority: string
-  status: string
-  created_at: string
-}
-
 interface GraphData {
-  nodes: { data: { id: string; label: string; risk: number } }[]
+  nodes: { data: { id: string; label: string; risk: number; type: string } }[]
   edges: { data: { source: string; target: string; label: string } }[]
 }
 
+interface InvestigationPayload {
+  alert: FraudAlert
+  transaction?: { [k: string]: any }
+  graph: {
+    nodes: Array<{ [k: string]: any }>
+    edges: Array<{ [k: string]: any }>
+  }
+  investigation_note: string
+}
+
 export default function App() {
-  const [view, setView] = useState<'dashboard' | 'alerts' | 'graph' | 'cases'>('dashboard')
-  const [alerts, setAlerts] = useState<Alert[]>([])
-  const [cases, setCases] = useState<Case[]>([])
+  const [view, setView] = useState<'stream' | 'investigation'>('stream')
+  const [alerts, setAlerts] = useState<FraudAlert[]>([])
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] })
-  const [selectedAccount, setSelectedAccount] = useState<string>('')
+  const [selectedAlert, setSelectedAlert] = useState<FraudAlert | null>(null)
+  const [investigationNote, setInvestigationNote] = useState<string>('')
+  const [investigationLoading, setInvestigationLoading] = useState(false)
+  const [streamState, setStreamState] = useState<'connecting' | 'live' | 'offline'>('connecting')
+  const [lastEventAt, setLastEventAt] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [strGenerating, setStrGenerating] = useState<string | null>(null)
   const [generatedStr, setGeneratedStr] = useState<string>('')
+  const wsRef = useRef<WebSocket | null>(null)
+  const reconnectTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     fetchAlerts()
+    connectWebSocket()
+
+    return () => {
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current)
+      }
+      if (wsRef.current) {
+        wsRef.current.close()
+      }
+    }
   }, [])
 
   const fetchAlerts = async () => {
     try {
-      const response = await alertsApi.list({})
-      setAlerts(response.data.items || [])
+      const response = await alertsApi.list({ min_risk_score: 60, page_size: 200 })
+      const items = (response.data.items || []) as FraudAlert[]
+      setAlerts(sortAlerts(items))
     } catch (error) {
       console.error('Failed to fetch alerts:', error)
     }
   }
 
-  const fetchGraph = async (accountId: string) => {
-    if (!accountId) return
+  const connectWebSocket = () => {
+    const apiBase =
+      (typeof window !== 'undefined' && (window as any).__UNIGRAPH_API_URL__) ||
+      'http://localhost:8000/api/v1'
+    const wsBase = apiBase.replace(/^http/, 'ws')
+    const investigatorId = `ui-${Date.now()}`
+    const socket = new WebSocket(`${wsBase}/ws/alerts/${investigatorId}`)
+
+    wsRef.current = socket
+    setStreamState('connecting')
+
+    socket.onopen = () => {
+      setStreamState('live')
+    }
+
+    socket.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data)
+        if (payload?.type !== 'ALERT_FIRED' || !payload.alert) {
+          return
+        }
+        const nextAlert = payload.alert as FraudAlert
+        if (nextAlert.risk_score < 60) {
+          return
+        }
+        setLastEventAt(new Date().toISOString())
+        setAlerts((prev) => sortAlerts(upsertAlert(prev, nextAlert)))
+      } catch (err) {
+        console.error('Failed to parse ws alert:', err)
+      }
+    }
+
+    socket.onclose = () => {
+      setStreamState('offline')
+      reconnectTimerRef.current = window.setTimeout(() => {
+        connectWebSocket()
+      }, 2500)
+    }
+
+    socket.onerror = () => {
+      setStreamState('offline')
+    }
+  }
+
+  const investigateAlert = async (alert: FraudAlert) => {
+    setInvestigationLoading(true)
     setLoading(true)
+    setGeneratedStr('')
     try {
-      const response = await accountsApi.subgraph(accountId, { hops: 2 })
-      const nodes = (response.data.nodes || []).map((n: any) => ({
-        data: { id: n.id, label: n.id, risk: n.risk_score || 0 }
+      const response = await alertsApi.investigate(alert.id, 2)
+      const payload = response.data as InvestigationPayload
+      const nodes = (payload.graph?.nodes || []).map((n: any) => ({
+        data: {
+          id: n.id || n.account_id || n.transaction_id,
+          label: n.id || n.account_id || n.transaction_id,
+          risk: Number(n.risk_score || 0),
+          type: Array.isArray(n.labels) && n.labels.length ? n.labels[0] : 'Node',
+        },
       }))
-      const edges = (response.data.edges || []).map((e: any) => ({
-        data: { source: e.source, target: e.target, label: `₹${e.amount || 0}` }
+      const edges = (payload.graph?.edges || []).map((e: any) => ({
+        data: {
+          source: e.source,
+          target: e.target,
+          label: e.amount ? `INR ${Number(e.amount).toLocaleString()}` : e.type || 'FLOW',
+        },
       }))
+
+      setSelectedAlert(payload.alert || alert)
+      setInvestigationNote(payload.investigation_note || 'No investigation note generated.')
       setGraphData({ nodes, edges })
+      setView('investigation')
     } catch (error) {
-      console.error('Failed to fetch graph:', error)
+      console.error('Failed to investigate alert:', error)
     }
     setLoading(false)
+    setInvestigationLoading(false)
   }
 
   const generateSTR = async (alertId: string) => {
@@ -84,112 +162,61 @@ export default function App() {
     setStrGenerating(null)
   }
 
-  const stats = {
-    open: alerts.filter(a => a.status === 'OPEN').length,
-    investigating: alerts.filter(a => a.status === 'INVESTIGATING').length,
+  const stats = useMemo(() => ({
+    liveFraud: alerts.length,
     critical: alerts.filter(a => a.risk_score >= 90).length,
-    high: alerts.filter(a => a.risk_score >= 80 && a.risk_score < 90).length,
-  }
+    mediumHigh: alerts.filter(a => a.risk_score >= 60 && a.risk_score < 90).length,
+    open: alerts.filter(a => a.status === 'OPEN').length,
+  }), [alerts])
 
-  const chartData = [
-    { name: 'Mon', alerts: 12 },
-    { name: 'Tue', alerts: 19 },
-    { name: 'Wed', alerts: 15 },
-    { name: 'Thu', alerts: 8 },
-    { name: 'Fri', alerts: 22 },
-    { name: 'Sat', alerts: 5 },
-    { name: 'Sun', alerts: 3 },
-  ]
+  const graphElements = useMemo(
+    () => [...graphData.nodes, ...graphData.edges],
+    [graphData],
+  )
 
-  const getRiskColor = (score: number) => {
-    if (score >= 90) return '#ef4444'
-    if (score >= 80) return '#f97316'
-    if (score >= 60) return '#eab308'
-    return '#22c55e'
-  }
-
-  const renderDashboard = () => (
+  const renderStream = () => (
     <div>
-      <h2 className="section-title">Dashboard</h2>
+      <div className="stream-header">
+        <h2 className="section-title">Live Fraud Transaction Stream</h2>
+        <span className={`stream-pill ${streamState}`}>{streamState === 'live' ? 'LIVE' : streamState.toUpperCase()}</span>
+      </div>
       <div className="stats-grid">
         <div className="stat-card">
-          <h3>Open Alerts</h3>
-          <div className="value">{stats.open}</div>
+          <h3>Fraud Transactions</h3>
+          <div className="value critical">{stats.liveFraud}</div>
         </div>
         <div className="stat-card">
-          <h3>Investigating</h3>
-          <div className="value medium">{stats.investigating}</div>
-        </div>
-        <div className="stat-card">
-          <h3>Critical Risk</h3>
+          <h3>Critical</h3>
           <div className="value critical">{stats.critical}</div>
         </div>
         <div className="stat-card">
-          <h3>High Risk</h3>
-          <div className="value high">{stats.high}</div>
+          <h3>Medium + High</h3>
+          <div className="value medium">{stats.mediumHigh}</div>
+        </div>
+        <div className="stat-card">
+          <h3>Open Alerts</h3>
+          <div className="value high">{stats.open}</div>
         </div>
       </div>
-      
-      <div className="section-title">Alert Trend</div>
-      <div style={{ background: '#1e293b', padding: '1rem', borderRadius: '0.75rem', marginBottom: '1.5rem' }}>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={chartData}>
-            <XAxis dataKey="name" stroke="#94a3b8" />
-            <YAxis stroke="#94a3b8" />
-            <Tooltip contentStyle={{ background: '#334155', border: 'none' }} />
-            <Bar dataKey="alerts" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
+
+      <div className="pipeline-strip">
+        {'Debezium -> Kafka -> Flink -> Neo4j -> ML -> LLM -> UI'}
       </div>
 
-      <div className="section-title">Recent Alerts</div>
+      <div className="stream-meta">
+        {lastEventAt ? `Last event: ${new Date(lastEventAt).toLocaleString()}` : 'Waiting for live fraud events...'}
+      </div>
+
       <div className="table-container">
         <table>
           <thead>
             <tr>
               <th>Alert ID</th>
+              <th>Txn ID</th>
               <th>Risk Score</th>
               <th>Account</th>
-              <th>SHAP Summary</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {alerts.slice(0, 5).map(alert => (
-              <tr key={alert.id}>
-                <td>{alert.id}</td>
-                <td>
-                  <span className={`badge ${alert.risk_score >= 90 ? 'critical' : alert.risk_score >= 80 ? 'high' : 'medium'}`}>
-                    {alert.risk_score}
-                  </span>
-                </td>
-                <td>{alert.account_id}</td>
-                <td>{alert.shap_top3?.join(', ') || '-'}</td>
-                <td>
-                  <span className={`badge ${alert.status.toLowerCase()}`}>{alert.status}</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-
-  const renderAlerts = () => (
-    <div>
-      <h2 className="section-title">Alert Inbox</h2>
-      <div className="table-container">
-        <table>
-          <thead>
-            <tr>
-              <th>Alert ID</th>
-              <th>Risk Score</th>
-              <th>Account</th>
-              <th>Risk Level</th>
               <th>Rule Flags</th>
               <th>Status</th>
-              <th>Created</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -197,24 +224,23 @@ export default function App() {
             {alerts.map(alert => (
               <tr key={alert.id}>
                 <td>{alert.id}</td>
+                <td>{alert.transaction_id || '-'}</td>
                 <td>
                   <span className={`badge ${alert.risk_score >= 90 ? 'critical' : alert.risk_score >= 80 ? 'high' : 'medium'}`}>
                     {alert.risk_score}
                   </span>
                 </td>
                 <td>{alert.account_id}</td>
-                <td>{alert.risk_level}</td>
                 <td>{alert.rule_flags?.join(', ') || '-'}</td>
                 <td>
                   <span className={`badge ${alert.status.toLowerCase()}`}>{alert.status}</span>
                 </td>
-                <td>{alert.created_at ? new Date(alert.created_at).toLocaleDateString() : '-'}</td>
                 <td>
-                  <button className="btn btn-primary" style={{ marginRight: '0.5rem' }} onClick={() => { setSelectedAccount(alert.account_id); setView('graph'); }}>
-                    View Graph
+                  <button className="btn btn-primary" onClick={() => investigateAlert(alert)} disabled={investigationLoading}>
+                    {investigationLoading ? 'Loading...' : 'Investigate'}
                   </button>
                   <button className="btn btn-secondary" onClick={() => generateSTR(alert.id)} disabled={strGenerating === alert.id}>
-                    {strGenerating === alert.id ? 'Generating...' : 'Generate STR'}
+                    {strGenerating === alert.id ? 'Generating...' : 'LLM STR'}
                   </button>
                 </td>
               </tr>
@@ -222,130 +248,128 @@ export default function App() {
           </tbody>
         </table>
       </div>
+
       {generatedStr && (
-        <div style={{ marginTop: '1rem', padding: '1rem', background: '#1e293b', borderRadius: '0.75rem' }}>
-          <h3 style={{ color: '#fff', marginBottom: '0.5rem' }}>Generated STR</h3>
-          <pre style={{ color: '#94a3b8', whiteSpace: 'pre-wrap', fontSize: '0.875rem' }}>{generatedStr}</pre>
+        <div className="investigation-panel" style={{ marginTop: '1rem' }}>
+          <h3 className="section-title" style={{ marginBottom: '0.75rem' }}>Latest LLM STR Draft</h3>
+          <pre className="str-output">{generatedStr}</pre>
         </div>
       )}
     </div>
   )
 
-  const renderGraph = () => (
+  const renderInvestigation = () => (
     <div>
-      <h2 className="section-title">Graph Explorer</h2>
-      <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem' }}>
-        <input 
-          type="text" 
-          placeholder="Enter account ID (e.g., ACC-LAYER-001)" 
-          value={selectedAccount}
-          onChange={(e) => setSelectedAccount(e.target.value)}
-          style={{ padding: '0.5rem', background: '#1e293b', border: '1px solid #334155', color: '#fff', borderRadius: '0.375rem', flex: 1 }}
-        />
-        <button className="btn btn-primary" onClick={() => fetchGraph(selectedAccount)}>Load Graph</button>
-      </div>
-      <div className="graph-container">
-        {loading ? (
-          <div style={{ color: '#94a3b8', textAlign: 'center', padding: '2rem' }}>Loading graph...</div>
-        ) : graphData.nodes.length > 0 ? (
-          <CytoscapeComponent
-            elements={graphData}
-            style={{ width: '100%', height: '500px' }}
-            layout={{ name: 'dagre', rankDir: 'LR' }}
-            stylesheet={[
-              {
-                selector: 'node',
-                style: {
-                  'background-color': '#3b82f6',
-                  'label': 'data(label)',
-                  'color': '#fff',
-                  'font-size': '12px',
-                }
-              },
-              {
-                selector: 'edge',
-                style: {
-                  'width': 2,
-                  'line-color': '#94a3b8',
-                  'target-arrow-color': '#94a3b8',
-                  'target-arrow-shape': 'triangle',
-                  'label': 'data(label)',
-                  'font-size': '10px',
-                  'color': '#94a3b8',
-                }
-              }
-            ]}
-          />
-        ) : (
-          <div style={{ color: '#94a3b8', textAlign: 'center', padding: '2rem' }}>
-            Enter an account ID and click "Load Graph" to visualize the fraud network
+      <h2 className="section-title">Dynamic Investigation Graph</h2>
+      {!selectedAlert ? (
+        <div className="investigation-panel">
+          Select a fraud transaction in Live Stream and click Investigate.
+        </div>
+      ) : (
+        <>
+          <div className="investigation-panel">
+            <div className="detail-grid">
+              <div>
+                <div className="detail-label">Alert</div>
+                <div className="detail-value">{selectedAlert.id}</div>
+              </div>
+              <div>
+                <div className="detail-label">Transaction</div>
+                <div className="detail-value">{selectedAlert.transaction_id || '-'}</div>
+              </div>
+              <div>
+                <div className="detail-label">Account</div>
+                <div className="detail-value">{selectedAlert.account_id}</div>
+              </div>
+              <div>
+                <div className="detail-label">Risk</div>
+                <div className="detail-value">{selectedAlert.risk_score}</div>
+              </div>
+            </div>
+            <div className="llm-note">
+              {investigationNote || 'No LLM investigation note available.'}
+            </div>
           </div>
-        )}
-      </div>
-    </div>
-  )
-
-  const renderCases = () => (
-    <div>
-      <h2 className="section-title">Cases</h2>
-      <div className="table-container">
-        <table>
-          <thead>
-            <tr>
-              <th>Case ID</th>
-              <th>Title</th>
-              <th>Priority</th>
-              <th>Status</th>
-              <th>Created</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cases.map(c => (
-              <tr key={c.case_id}>
-                <td>{c.case_id}</td>
-                <td>{c.title}</td>
-                <td>
-                  <span className={`badge ${c.priority.toLowerCase()}`}>{c.priority}</span>
-                </td>
-                <td>
-                  <span className={`badge ${c.status.toLowerCase()}`}>{c.status}</span>
-                </td>
-                <td>{new Date(c.created_at).toLocaleDateString()}</td>
-                <td>
-                  <button className="btn btn-primary">View</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          <div className="graph-container">
+            {loading ? (
+              <div className="loading">Loading graph...</div>
+            ) : graphData.nodes.length > 0 ? (
+              <CytoscapeComponent
+                elements={graphElements}
+                style={{ width: '100%', height: '100%' }}
+                layout={{ name: 'dagre', rankDir: 'LR', nodeSep: 30, rankSep: 80 }}
+                stylesheet={[
+                  {
+                    selector: 'node',
+                    style: {
+                      'background-color': 'mapData(risk, 0, 100, #2dd4bf, #ef4444)',
+                      'label': 'data(label)',
+                      'color': '#f8fafc',
+                      'font-size': '11px',
+                      'font-weight': 700,
+                      'text-wrap': 'wrap',
+                      'text-max-width': '120px',
+                      'width': 42,
+                      'height': 42,
+                    },
+                  },
+                  {
+                    selector: 'edge',
+                    style: {
+                      'width': 2,
+                      'line-color': '#64748b',
+                      'target-arrow-color': '#64748b',
+                      'target-arrow-shape': 'triangle',
+                      'curve-style': 'bezier',
+                      'label': 'data(label)',
+                      'font-size': '9px',
+                      'color': '#cbd5e1',
+                    },
+                  },
+                ]}
+              />
+            ) : (
+              <div className="loading">No graph edges available for this alert.</div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 
   return (
     <div className="app-container">
       <div className="sidebar">
-        <div className="logo">UniGRAPH</div>
-        <div className={`nav-item ${view === 'dashboard' ? 'active' : ''}`} onClick={() => setView('dashboard')}>
-          Dashboard
+        <div className="logo">UniGRAPH LiveOps</div>
+        <div className={`nav-item ${view === 'stream' ? 'active' : ''}`} onClick={() => setView('stream')}>
+          Fraud Stream
         </div>
-        <div className={`nav-item ${view === 'alerts' ? 'active' : ''}`} onClick={() => setView('alerts')}>
-          Alerts
-        </div>
-        <div className={`nav-item ${view === 'graph' ? 'active' : ''}`} onClick={() => setView('graph')}>
-          Graph Explorer
-        </div>
-        <div className={`nav-item ${view === 'cases' ? 'active' : ''}`} onClick={() => setView('cases')}>
-          Cases
+        <div className={`nav-item ${view === 'investigation' ? 'active' : ''}`} onClick={() => setView('investigation')}>
+          Investigation Graph
         </div>
       </div>
       <div className="main-content">
-        {view === 'dashboard' && renderDashboard()}
-        {view === 'alerts' && renderAlerts()}
-        {view === 'graph' && renderGraph()}
-        {view === 'cases' && renderCases()}
+        {view === 'stream' && renderStream()}
+        {view === 'investigation' && renderInvestigation()}
       </div>
     </div>
   )
+}
+
+function upsertAlert(existing: FraudAlert[], incoming: FraudAlert): FraudAlert[] {
+  const index = existing.findIndex((a) => a.id === incoming.id)
+  if (index === -1) {
+    return [incoming, ...existing]
+  }
+  const copy = [...existing]
+  copy[index] = { ...copy[index], ...incoming }
+  return copy
+}
+
+function sortAlerts(items: FraudAlert[]): FraudAlert[] {
+  return [...items].sort((a, b) => {
+    const at = a.created_at ? new Date(a.created_at).getTime() : 0
+    const bt = b.created_at ? new Date(b.created_at).getTime() : 0
+    return bt - at
+  })
 }

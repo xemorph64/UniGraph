@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -28,6 +28,7 @@ ROLE_PERMISSIONS = {
         "read:cases",
         "write:cases",
         "read:graph",
+        "read:graph-analytics",
         "read:transactions",
     ],
     "SUPERVISOR": [
@@ -35,27 +36,35 @@ ROLE_PERMISSIONS = {
         "read:cases",
         "write:cases",
         "read:graph",
+        "read:graph-analytics",
+        "run:graph-analytics",
         "read:transactions",
         "approve:str",
         "read:reports",
+        "write:enforcement",
+        "approve:enforcement",
     ],
     "COMPLIANCE_OFFICER": [
         "read:alerts",
         "read:cases",
         "write:cases",
         "read:graph",
+        "read:graph-analytics",
+        "run:graph-analytics",
         "read:transactions",
         "approve:str",
         "read:reports",
         "write:reports",
         "submit:str",
+        "write:enforcement",
+        "approve:enforcement",
     ],
     "ADMIN": ["*"],
 }
 
 
 def create_access_token(user: User) -> str:
-    expire = datetime.utcnow() + timedelta(minutes=settings.JWT_EXPIRY_MINUTES)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_EXPIRY_MINUTES)
     payload = {"sub": user.user_id, "role": user.role, "exp": expire}
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 

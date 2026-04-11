@@ -6,6 +6,7 @@ from datetime import datetime
 
 from ..services.neo4j_service import neo4j_service
 from ..services.fraud_scorer import fraud_scorer
+from .ws import manager
 
 router = APIRouter()
 
@@ -55,9 +56,22 @@ async def list_transactions(
     page_size: int = Query(50, ge=1, le=500),
     account_id: Optional[str] = None,
     channel: Optional[str] = None,
+    min_risk_score: Optional[float] = Query(None, ge=0, le=100),
 ):
     """List transactions with pagination and filters."""
-    return {"items": [], "page": page, "page_size": page_size}
+    result = await neo4j_service.get_transactions(
+        page=page,
+        page_size=page_size,
+        account_id=account_id,
+        channel=channel,
+        min_risk_score=min_risk_score,
+    )
+    return {
+        "items": result["items"],
+        "total": result["total"],
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.post("/ingest", response_model=TransactionResponse)
@@ -98,6 +112,27 @@ async def ingest_transaction(txn: TransactionIngest):
                 "shap_top3": score_result["shap_top3"],
                 "rule_flags": score_result["rule_violations"],
                 "recommendation": score_result["recommendation"],
+            }
+        )
+
+        created_at = alert.get("created_at") if alert else None
+        if hasattr(created_at, "isoformat"):
+            created_at = created_at.isoformat()
+
+        await manager.broadcast_alert(
+            {
+                "alert": {
+                    "id": alert_id,
+                    "transaction_id": txn_dict["txn_id"],
+                    "account_id": txn.from_account,
+                    "risk_score": score_result["risk_score"],
+                    "risk_level": score_result["risk_level"],
+                    "recommendation": score_result["recommendation"],
+                    "rule_flags": score_result["rule_violations"],
+                    "shap_top3": score_result["shap_top3"],
+                    "status": "OPEN",
+                    "created_at": created_at,
+                }
             }
         )
 

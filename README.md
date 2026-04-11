@@ -72,6 +72,25 @@ cd frontend && npm install && npm run dev
 
 - **Implementation Plan**: `UniGRAPH_3_Person_Implementation_Plan.md` — Master guide for all 3 developers
 - **Research & Architecture**: `UniGRAPH_Research_and_Planning.md` — Full blueprint with compliance, Finacle integration, risk register
+- **Smoke Validation**: `scripts/SMOKE_VALIDATION.md` — Live provider checks and infra stack readiness checks
+
+## Validation Workflows
+
+- `ci-cd/.github/workflows/staging-live-provider-smoke.yml` — Manual live provider connectivity/auth smoke (staging)
+- `ci-cd/.github/workflows/infra-stack-smoke.yml` — Manual docker-compose infra readiness smoke
+- `ci-cd/BRANCH_PROTECTION_REQUIRED_CHECKS.md` — Required checks to enforce in GitHub branch protection settings
+
+## Non-Demo Mode
+
+- Backend defaults now run with `DEMO_MODE=false` and `DEMO_SEED_ON_STARTUP=false`.
+- In non-demo mode, startup validates provider configuration and fails fast if required values are missing.
+- Demo reset route `/api/v1/demo/reset` is disabled in non-demo mode.
+
+If you previously seeded demo entities in Neo4j, clean them with one command:
+
+```powershell
+& "c:/vs code/UniGRAPH2/.venv/Scripts/python.exe" scripts/cleanup_demo_graph_data.py --uri bolt://localhost:7687 --user neo4j --password unigraph_dev
+```
 
 ## Compliance
 

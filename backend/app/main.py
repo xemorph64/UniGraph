@@ -1,12 +1,13 @@
 import asyncio
 from contextlib import asynccontextmanager
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from .config import settings
 from .services.neo4j_service import neo4j_service
+from .services.timeline_service import timeline_service
 from .routers import (
     transactions,
     accounts,
@@ -16,18 +17,66 @@ from .routers import (
     ws,
     fraud_scoring,
     enforcement,
+    graph_analytics,
 )
 
 logger = structlog.get_logger()
 
 
+async def _run_gds_once(reason: str) -> None:
+    try:
+        result = await neo4j_service.run_gds_analytics()
+        logger.info("gds_analytics_run_complete", reason=reason, result=result)
+    except Exception as exc:
+        logger.warning("gds_analytics_run_failed", reason=reason, error=str(exc))
+
+
+async def _gds_scheduler_loop() -> None:
+    while True:
+        await _run_gds_once("scheduled")
+        await asyncio.sleep(max(60, int(settings.GDS_REFRESH_SECONDS)))
+
+
+def _validate_non_demo_configuration() -> None:
+    if settings.DEMO_MODE:
+        return
+
+    required_values = {
+        "FINACLE_API_URL": settings.FINACLE_API_URL,
+        "FINACLE_CLIENT_ID": settings.FINACLE_CLIENT_ID,
+        "FINACLE_CLIENT_SECRET": settings.FINACLE_CLIENT_SECRET,
+        "FIU_IND_API_URL": settings.FIU_IND_API_URL,
+        "FIU_IND_MTLS_CERT_PATH": settings.FIU_IND_MTLS_CERT_PATH,
+        "FIU_IND_MTLS_KEY_PATH": settings.FIU_IND_MTLS_KEY_PATH,
+        "NCRP_API_URL": settings.NCRP_API_URL,
+        "NCRP_API_KEY": settings.NCRP_API_KEY,
+    }
+    missing = [key for key, value in required_values.items() if not value]
+    if missing:
+        raise RuntimeError(
+            "Non-demo mode requires provider configuration values: "
+            + ", ".join(missing)
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("unigraph_starting", env=settings.APP_ENV)
+    gds_scheduler_task: asyncio.Task | None = None
+    _validate_non_demo_configuration()
     try:
         await neo4j_service.connect()
         await neo4j_service.initialize_schema()
         logger.info("neo4j_ready")
+
+        if settings.ENABLE_GDS_SCHEDULER:
+            if settings.GDS_RUN_ON_STARTUP:
+                await _run_gds_once("startup")
+            gds_scheduler_task = asyncio.create_task(_gds_scheduler_loop())
+            logger.info(
+                "gds_scheduler_started",
+                refresh_seconds=max(60, int(settings.GDS_REFRESH_SECONDS)),
+            )
     except Exception as e:
         logger.error("neo4j_connection_failed", error=str(e))
         logger.warning("running_without_neo4j_demo_will_use_fallback")
@@ -41,7 +90,15 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    if gds_scheduler_task:
+        gds_scheduler_task.cancel()
+        try:
+            await gds_scheduler_task
+        except asyncio.CancelledError:
+            pass
+
     await neo4j_service.close()
+    await timeline_service.close()
     logger.info("unigraph_shutdown")
 
 
@@ -95,6 +152,11 @@ app.include_router(fraud_scoring.router, prefix="/api/v1/fraud", tags=["fraud-sc
 app.include_router(
     enforcement.router, prefix="/api/v1/enforcement", tags=["enforcement"]
 )
+app.include_router(
+    graph_analytics.router,
+    prefix="/api/v1/graph-analytics",
+    tags=["graph-analytics"],
+)
 
 
 @app.get("/health")
@@ -116,6 +178,9 @@ async def health():
 
 @app.get("/api/v1/demo/reset")
 async def reset_demo():
+    if not settings.DEMO_MODE:
+        raise HTTPException(status_code=404, detail="Not found")
+
     try:
         import subprocess, sys, os
 

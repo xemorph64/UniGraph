@@ -3,6 +3,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from ..services.neo4j_service import neo4j_service
+from ..services.timeline_service import timeline_service
 
 router = APIRouter()
 
@@ -49,4 +50,4 @@ async def get_account_profile(account_id: str):
 @router.get("/{account_id}/timeline")
 async def get_account_timeline(account_id: str, days: int = Query(30, ge=1, le=365)):
     """Get historical risk score timeline from Cassandra."""
-    return {"account_id": account_id, "days": days, "timeline": []}
+    return await timeline_service.get_account_timeline(account_id=account_id, days=days)

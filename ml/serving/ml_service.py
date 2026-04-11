@@ -2,8 +2,12 @@ import os
 import sys
 import time
 import json
+import math
+import re
+import csv
 from datetime import datetime
 from typing import Optional
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import numpy as np
@@ -19,6 +23,163 @@ if_model = None
 xgb_model = None
 shap_explainer = None
 feature_engineer = None
+
+fallback_ready = False
+fallback_version = "fallback-linear-v1"
+fraud_coef = None
+risk_coef = None
+feature_mean = None
+feature_std = None
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _channel_risk(channel: str) -> float:
+    score_map = {
+        "UPI": 0.30,
+        "IMPS": 0.35,
+        "NEFT": 0.40,
+        "RTGS": 0.55,
+        "SWIFT": 0.70,
+        "CASH": 0.80,
+    }
+    return score_map.get(str(channel).upper(), 0.40)
+
+
+def _build_feature_vector(txn: dict) -> list[float]:
+    amount = float(txn.get("amount", 0.0) or 0.0)
+    velocity_1h = float(txn.get("velocity_1h", 0) or 0)
+    velocity_24h = float(txn.get("velocity_24h", 0) or 0)
+    device_account_count = float(txn.get("device_account_count", 1) or 1)
+    is_dormant = 1.0 if txn.get("is_dormant", False) else 0.0
+    channel_risk = _channel_risk(txn.get("channel", "IMPS"))
+    log_amount = math.log1p(max(amount, 0.0))
+
+    # Intercept + compact feature basis for quick local model fitting.
+    return [
+        1.0,
+        log_amount,
+        channel_risk,
+        velocity_1h,
+        velocity_24h,
+        device_account_count,
+        is_dormant,
+    ]
+
+
+def _to_bool(value: str) -> bool:
+    return str(value).strip().lower() in {"true", "1", "yes", "y", "t"}
+
+
+def _load_training_rows_from_csv(csv_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    x_rows = []
+    y_fraud = []
+    y_risk = []
+
+    with csv_path.open("r", encoding="utf-8", newline="") as fp:
+        reader = csv.DictReader(fp)
+        for row in reader:
+            try:
+                amount = float(row.get("amount") or 0.0)
+                channel = str(row.get("channel") or "IMPS")
+                risk_score = float(row.get("risk_score") or 0.0)
+                ml_score = float(row.get("ml_score") or 0.0)
+                is_fraud = 1.0 if _to_bool(row.get("is_fraud", "")) else 0.0
+                is_flagged = _to_bool(row.get("is_flagged", ""))
+                high_risk = is_flagged or is_fraud > 0.0 or risk_score >= 70 or ml_score >= 70
+
+                enriched = {
+                    "amount": amount,
+                    "channel": channel,
+                    "velocity_1h": 5 if high_risk else (3 if risk_score >= 50 else 0),
+                    "velocity_24h": 10 if high_risk else (5 if risk_score >= 50 else 0),
+                    "device_account_count": 4 if high_risk else 1,
+                    "is_dormant": bool(high_risk and amount >= 200000 and channel in {"RTGS", "SWIFT"}),
+                }
+                x_rows.append(_build_feature_vector(enriched))
+                y_fraud.append(is_fraud)
+                y_risk.append(risk_score)
+            except Exception:
+                continue
+
+    if not x_rows:
+        raise RuntimeError("No parseable rows in CSV training file")
+    return np.array(x_rows, dtype=np.float64), np.array(y_fraud, dtype=np.float64), np.array(y_risk, dtype=np.float64)
+
+
+def _load_training_rows_from_sql(sql_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    text = sql_path.read_text(encoding="utf-8")
+    rows = re.findall(r"INSERT INTO transactions VALUES \((.*?)\);", text, re.DOTALL)
+    x_rows = []
+    y_fraud = []
+    y_risk = []
+    for row in rows:
+        parts = [p.strip().strip("'").strip('"') for p in row.split(",")]
+        if len(parts) < 24:
+            continue
+        try:
+            amount = float(parts[6]) if parts[6] else 0.0
+            channel = parts[8] if parts[8] else "IMPS"
+            risk_score = float(parts[18]) if parts[18] else 0.0
+            is_fraud = 1.0 if parts[22].strip().lower() in {"true", "1", "yes", "y", "t"} else 0.0
+            is_flagged = parts[20].strip().lower() in {"true", "1", "yes", "y", "t"}
+            ml_score = float(parts[19]) if parts[19] else 0.0
+            high_risk = is_flagged or is_fraud > 0.0 or risk_score >= 70 or ml_score >= 70
+
+            enriched = {
+                "amount": amount,
+                "channel": channel,
+                "velocity_1h": 5 if high_risk else (3 if risk_score >= 50 else 0),
+                "velocity_24h": 10 if high_risk else (5 if risk_score >= 50 else 0),
+                "device_account_count": 4 if high_risk else 1,
+                "is_dormant": bool(high_risk and amount >= 200000 and channel in {"RTGS", "SWIFT"}),
+            }
+            x_rows.append(_build_feature_vector(enriched))
+            y_fraud.append(is_fraud)
+            y_risk.append(risk_score)
+        except Exception:
+            continue
+
+    if not x_rows:
+        raise RuntimeError("No parseable rows in SQL training file")
+    return np.array(x_rows, dtype=np.float64), np.array(y_fraud, dtype=np.float64), np.array(y_risk, dtype=np.float64)
+
+
+def _sigmoid(arr: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-arr))
+
+
+def _train_fallback_models() -> None:
+    global fallback_ready, fraud_coef, risk_coef, feature_mean, feature_std, model_version
+    data_source = None
+    sql_path = _repo_root() / "transactions_inserts.sql"
+    csv_path = _repo_root() / "transactions_dataset.csv"
+
+    if csv_path.exists():
+        x, y_fraud, y_risk = _load_training_rows_from_csv(csv_path)
+        data_source = csv_path
+    elif sql_path.exists():
+        x, y_fraud, y_risk = _load_training_rows_from_sql(sql_path)
+        data_source = sql_path
+    else:
+        return
+
+    x_no_bias = x[:, 1:]
+
+    # Closed-form least squares fits for fast startup and deterministic scoring.
+    fraud_coef = np.linalg.pinv(x) @ y_fraud
+    risk_coef = np.linalg.pinv(x) @ y_risk
+
+    feature_mean = x_no_bias.mean(axis=0)
+    feature_std = x_no_bias.std(axis=0)
+    feature_std[feature_std < 1e-6] = 1.0
+
+    fallback_ready = True
+    source_tag = "csv" if data_source and data_source.suffix.lower() == ".csv" else "sql"
+    model_version = f"unigraph-ml-service-{fallback_version}-{source_tag}"
+    print(f"Trained fallback models from {data_source} with {x.shape[0]} rows")
 
 
 class MLScoringRequest(BaseModel):
@@ -97,6 +258,12 @@ async def load_models(model_dir: str = "/models"):
     except Exception as e:
         print(f"Could not load Feature Engineer: {e}")
 
+    if gnn_model is None or if_model is None or xgb_model is None:
+        try:
+            _train_fallback_models()
+        except Exception as e:
+            print(f"Could not train fallback models: {e}")
+
 
 async def score_transaction(
     enriched_txn: dict, graph_features: Optional[dict] = None
@@ -126,6 +293,7 @@ async def score_transaction(
         except Exception as e:
             print(f"IF scoring error: {e}")
 
+    compact_features = np.array(_build_feature_vector(enriched_txn), dtype=np.float64)
     tx_features = extract_tx_features(enriched_txn)
     default_graph = graph_features or {}
     default_txn = {
@@ -161,7 +329,19 @@ async def score_transaction(
             print(f"XGBoost scoring error: {e}")
             risk_score = int((gnn_score * 0.4 + if_score * 0.2 + 0.5 * 0.4) * 100)
     else:
-        risk_score = int((gnn_score * 0.4 + if_score * 0.2 + 0.5 * 0.4) * 100)
+        if fallback_ready and fraud_coef is not None and risk_coef is not None:
+            linear_fraud = float(compact_features @ fraud_coef)
+            gnn_score = float(np.clip(linear_fraud, 0.0, 1.0))
+
+            if feature_mean is not None and feature_std is not None:
+                z = np.abs((compact_features[1:] - feature_mean) / feature_std)
+                if_score = float(np.clip(np.mean(z) / 3.0, 0.0, 1.0))
+
+            linear_risk = float(compact_features @ risk_coef)
+            blended_risk = 0.75 * np.clip(linear_risk, 0.0, 100.0) + 25.0 * if_score
+            risk_score = int(np.clip(round(blended_risk), 0, 100))
+        else:
+            risk_score = int((gnn_score * 0.4 + if_score * 0.2 + 0.5 * 0.4) * 100)
 
     shap_top3 = []
     if shap_explainer is not None and xgb_model is not None:
@@ -178,6 +358,13 @@ async def score_transaction(
             shap_top3 = shap_result.get("shap_top3", [])
         except Exception as e:
             print(f"SHAP error: {e}")
+
+    if not shap_top3 and fallback_ready:
+        shap_top3 = [
+            f"amount_log: {round(float(compact_features[1]), 3)}",
+            f"channel_risk: {round(float(compact_features[2]), 3)}",
+            f"velocity_1h: {int(compact_features[3])}",
+        ]
 
     elapsed_ms = (time.time() - start_time) * 1000
 
@@ -258,6 +445,7 @@ async def health():
         "gnn_loaded": gnn_model is not None,
         "if_loaded": if_model is not None,
         "xgb_loaded": xgb_model is not None,
+        "fallback_ready": fallback_ready,
     }
 
 

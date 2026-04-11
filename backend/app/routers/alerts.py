@@ -2,6 +2,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from typing import Optional
 from ..services.neo4j_service import neo4j_service
+from ..services.llm_service import llm_service
 
 router = APIRouter()
 
@@ -57,3 +58,41 @@ async def escalate_alert(alert_id: str, reason: str = ""):
         alert_id, "ESCALATED", "SUPERVISOR"
     )
     return {"alert_id": alert_id, "status": "ESCALATED", "reason": reason}
+
+
+@router.get("/{alert_id}/investigate")
+async def investigate_alert(alert_id: str, hops: int = Query(2, ge=1, le=4)):
+    """Get dynamic investigation payload with alert, graph and analyst note."""
+    alert = await neo4j_service.get_alert_by_id(alert_id)
+    if not alert:
+        return {"error": "Alert not found"}
+
+    account_id = alert.get("account_id", "")
+    transaction_id = alert.get("transaction_id", "")
+    graph = await neo4j_service.get_account_subgraph(account_id, hops=hops)
+    transaction = (
+        await neo4j_service.get_transaction(transaction_id) if transaction_id else None
+    )
+
+    rule_flags = alert.get("rule_flags") or []
+    shap_top3 = alert.get("shap_top3") or []
+    risk_score = alert.get("risk_score", 0)
+    risk_level = alert.get("risk_level", "UNKNOWN")
+    recommendation = alert.get("recommendation", "Review transaction flow")
+
+    llm_case_data = {
+        "account_id": account_id,
+        "risk_score": risk_score,
+        "alert_count": 1,
+        "rule_violations": ", ".join(rule_flags) or "none",
+        "pattern_description": f"{len(graph.get('nodes', []))} linked nodes, "
+        f"{len(graph.get('edges', []))} fund-flow edges",
+    }
+    note = await llm_service.summarize_case(llm_case_data)
+
+    return {
+        "alert": alert,
+        "transaction": transaction,
+        "graph": graph,
+        "investigation_note": note,
+    }

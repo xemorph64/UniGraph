@@ -1,7 +1,11 @@
 import axios from 'axios';
 
+const runtimeApiBase =
+  (typeof window !== 'undefined' && (window as any).__UNIGRAPH_API_URL__) ||
+  'http://localhost:8000/api/v1';
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1',
+  baseURL: runtimeApiBase,
   timeout: 10000,
 });
 
@@ -31,6 +35,7 @@ export const transactionsApi = {
 
 export const alertsApi = {
   list: (params: any) => api.get('/alerts/', { params }),
+  investigate: (id: string, hops: number = 2) => api.get(`/alerts/${id}/investigate`, { params: { hops } }),
   acknowledge: (id: string) => api.post(`/alerts/${id}/acknowledge`),
   escalate: (id: string, reason: string) => api.post(`/alerts/${id}/escalate`, { reason }),
 };

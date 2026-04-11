@@ -9,20 +9,38 @@ on:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r backend/requirements.txt pytest pytest-asyncio pytest-cov
       - name: Run tests
-        run: pytest -q || true
+        run: PYTHONPATH=backend pytest backend/tests ml/tests --maxfail=1 -q
 
-  frontend-tests:
+  approval-route-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt pytest pytest-asyncio pytest-cov
+      - name: Run approval route coverage gate
+        run: >-
+          PYTHONPATH=backend pytest
+          backend/tests/test_approval_routes_api.py
+          backend/tests/test_reports_enforcement.py
+          backend/tests/test_workflow_e2e.py
+          --cov=backend.app.routers.reports
+          --cov=backend.app.routers.enforcement
+          --cov=backend.app.auth.jwt_rbac
+          --cov-fail-under=75
+          -q
+
+  frontend-build:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -36,5 +54,5 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci || npm install
-      - name: Run tests
-        run: npm test -- --watch=false || true
+      - name: Build frontend
+        run: npm run build

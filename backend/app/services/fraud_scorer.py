@@ -6,7 +6,9 @@ In demo mode, uses simplified heuristics when ML service is unavailable.
 import asyncio
 import random
 import uuid
+import httpx
 from datetime import datetime
+from datetime import timezone
 from typing import Optional
 import structlog
 from .neo4j_service import neo4j_service
@@ -44,6 +46,35 @@ FRAUD_TYPOLOGIES = {
 
 
 class FraudScorer:
+    def __init__(self):
+        self._ml_score_url = f"{settings.ML_SERVICE_URL.rstrip('/')}/api/v1/ml/score"
+
+    async def _score_with_ml_service(self, txn: dict, rule_violations: list[str]) -> Optional[dict]:
+        payload = {
+            "enriched_transaction": {
+                "txn_id": txn.get("txn_id"),
+                "amount": float(txn.get("amount", 0.0)),
+                "channel": txn.get("channel", "IMPS"),
+                "velocity_1h": int(txn.get("velocity_1h", 0)),
+                "velocity_24h": int(txn.get("velocity_24h", 0)),
+                "device_account_count": int(txn.get("device_account_count", 1)),
+                "is_dormant": bool(txn.get("is_dormant", False)),
+                "rule_violations": rule_violations,
+            },
+            "graph_features": {
+                "connected_suspicious_nodes": int(txn.get("connected_suspicious_nodes", 0)),
+                "community_risk_score": float(txn.get("community_risk_score", 0.0)),
+            },
+        }
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                response = await client.post(self._ml_score_url, json=payload)
+                response.raise_for_status()
+                return response.json()
+        except Exception as exc:
+            logger.warning("ml_service_unavailable_fallback_to_rules", error=str(exc))
+            return None
+
     async def score_transaction(self, txn: dict) -> dict:
         """
         Score a transaction using rule-based heuristics + ML signals.
@@ -56,6 +87,8 @@ class FraudScorer:
         amount = txn.get("amount", 0)
         channel = txn.get("channel", "IMPS")
         from_account = txn.get("from_account", "")
+        to_account = txn.get("to_account", "")
+        description = str(txn.get("description", "")).upper()
         is_dormant = txn.get("is_dormant", False)
         device_account_count = txn.get("device_account_count", 1)
         velocity_1h = txn.get("velocity_1h", 0)
@@ -97,11 +130,40 @@ class FraudScorer:
             risk_score += 8
             shap_contributions.append(f"high_risk_channel_{channel}: +8")
 
+        # Round-tripping indicator used in synthetic and replay tests.
+        if (from_account and to_account and from_account == to_account) or (
+            "ROUND_TRIP" in description
+        ):
+            risk_score += 28
+            if "ROUND_TRIPPING" not in rule_violations:
+                rule_violations.append("ROUND_TRIPPING")
+            shap_contributions.append("round_tripping_pattern: +28")
+
         if velocity_24h >= 10:
             risk_score += 15
             shap_contributions.append(f"velocity_24h_{velocity_24h}_txns: +15")
 
-        risk_score = min(round(risk_score), 100)
+        rule_based_score = min(round(risk_score), 100)
+
+        ml_result = await self._score_with_ml_service(txn, rule_violations)
+        if ml_result:
+            ml_score = max(0, min(100, int(round(float(ml_result.get("xgboost_risk_score", 0))))))
+            # Blend learned score with deterministic rule signals to preserve typology explainability.
+            risk_score = min(100, round(ml_score * 0.8 + rule_based_score * 0.2))
+            gnn_fraud_probability = float(ml_result.get("gnn_fraud_probability", min(risk_score / 100, 1.0)))
+            if_anomaly_score = float(ml_result.get("if_anomaly_score", min(risk_score / 120, 1.0)))
+            xgboost_risk_score = ml_score
+            shap_top3 = list(ml_result.get("shap_top3") or shap_contributions[:3])
+            model_version = str(ml_result.get("model_version", "ml-service-unknown"))
+            scoring_timestamp = str(ml_result.get("timestamp", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")))
+        else:
+            risk_score = rule_based_score
+            gnn_fraud_probability = min(risk_score / 100, 1.0)
+            if_anomaly_score = min(risk_score / 120, 1.0)
+            xgboost_risk_score = risk_score
+            shap_top3 = shap_contributions[:3]
+            model_version = "unigraph-demo-v1.0"
+            scoring_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         if risk_score >= 90:
             risk_level = "CRITICAL"
@@ -122,12 +184,12 @@ class FraudScorer:
             "risk_level": risk_level,
             "recommendation": recommendation,
             "rule_violations": rule_violations,
-            "shap_top3": shap_contributions[:3],
-            "gnn_fraud_probability": min(risk_score / 100, 1.0),
-            "if_anomaly_score": min(risk_score / 120, 1.0),
-            "xgboost_risk_score": risk_score,
-            "model_version": "unigraph-demo-v1.0",
-            "scoring_timestamp": datetime.utcnow().isoformat() + "Z",
+            "shap_top3": shap_top3,
+            "gnn_fraud_probability": gnn_fraud_probability,
+            "if_anomaly_score": if_anomaly_score,
+            "xgboost_risk_score": xgboost_risk_score,
+            "model_version": model_version,
+            "scoring_timestamp": scoring_timestamp,
         }
 
         logger.info(

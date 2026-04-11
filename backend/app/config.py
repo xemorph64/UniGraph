@@ -1,8 +1,14 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="ignore",
+    )
+
     APP_ENV: str = "development"
     APP_DEBUG: bool = True
     APP_CORS_ORIGINS: str = "http://localhost:5173"
@@ -25,6 +31,10 @@ class Settings(BaseSettings):
 
     ML_SERVICE_URL: str = "http://localhost:8002"
 
+    ENABLE_GDS_SCHEDULER: bool = True
+    GDS_RUN_ON_STARTUP: bool = True
+    GDS_REFRESH_SECONDS: int = 300
+
     LLM_PROVIDER: str = "groq"
     GROQ_API_KEY: str = ""
     LLM_MODEL: str = "llama-3.1-70b-versatile"
@@ -36,16 +46,12 @@ class Settings(BaseSettings):
 
     FIU_IND_API_URL: str = ""
     FIU_IND_MTLS_CERT_PATH: str = ""
+    FIU_IND_MTLS_KEY_PATH: str = ""
     NCRP_API_URL: str = ""
     NCRP_API_KEY: str = ""
 
-    DEMO_MODE: bool = True
-    DEMO_SEED_ON_STARTUP: bool = True
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-        extra = "ignore"
+    DEMO_MODE: bool = False
+    DEMO_SEED_ON_STARTUP: bool = False
 
 
 settings = Settings()
