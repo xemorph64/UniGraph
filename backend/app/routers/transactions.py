@@ -23,6 +23,7 @@ class TransactionResponse(BaseModel):
     rule_violations: list[str]
     is_flagged: bool
     alert_id: Optional[str] = None
+    probability: Optional[float] = None
 
 
 class TransactionIngest(BaseModel):
@@ -114,4 +115,5 @@ async def ingest_transaction(txn: TransactionIngest):
         rule_violations=score_result["rule_violations"],
         is_flagged=txn_dict["is_flagged"],
         alert_id=alert["id"] if alert else None,
+        probability=score_result["risk_score"] / 100.0,
     )
