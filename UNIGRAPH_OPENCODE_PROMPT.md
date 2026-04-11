@@ -3,10 +3,6 @@
 
 ---
 
-> **COPY EVERYTHING BELOW THIS LINE INTO OPENCODE**
-
----
-
 # 🎯 MISSION BRIEFING
 
 You are an expert full-stack engineer tasked with making the **UniGRAPH** system fully

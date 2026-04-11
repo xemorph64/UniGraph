@@ -6,7 +6,14 @@ import {
   Eye, 
   ChevronRight,
   Zap,
-  ArrowUpRight
+  ArrowUpRight,
+  Play,
+  Square,
+  Server,
+  Cpu,
+  ShieldCheck,
+  Search,
+  Activity
 } from "lucide-react";
 import { BarChart, Bar, XAxis, ResponsiveContainer, Tooltip, Cell } from "recharts";
 import { motion } from "motion/react";
@@ -33,15 +40,82 @@ interface Alert {
   rule_flags: string[];
 }
 
+interface WorkflowStage {
+  id: string;
+  name: string;
+  status: "idle" | "running" | "completed" | "error";
+  icon: React.ElementType;
+  description: string;
+}
+
+interface SystemStatus {
+  isRunning: boolean;
+  stages: WorkflowStage[];
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [health, setHealth] = useState<HealthData | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>({
+    isRunning: false,
+    stages: [
+      { id: "ingestion", name: "Data Ingestion", status: "idle", icon: Server, description: "Finacle transaction ingestion from SQL" },
+      { id: "ml", name: "ML Pipeline", status: "idle", icon: Cpu, description: "Graph feature engineering & scoring" },
+      { id: "detection", name: "Detection Engine", status: "idle", icon: Search, description: "Rule-based fraud pattern detection" },
+      { id: "alerting", name: "Alert Generation", status: "idle", icon: ShieldCheck, description: "Auto-create alerts for high-risk txns" },
+      { id: "enforcement", name: "Enforcement", status: "idle", icon: Activity, description: "Block/Freeze high-risk accounts" },
+    ]
+  });
+
+  const startSystem = async () => {
+    setSystemStatus(prev => ({
+      ...prev,
+      isRunning: true,
+      stages: prev.stages.map(s => ({ ...s, status: "running" as const }))
+    }));
+
+    try {
+      await fetch("/api/v1/demo/reset");
+      
+      const stageOrder = ["ingestion", "ml", "detection", "alerting", "enforcement"];
+      for (const stageId of stageOrder) {
+        await new Promise(resolve => setTimeout(resolve, 800));
+        setSystemStatus(prev => ({
+          ...prev,
+          stages: prev.stages.map(s => 
+            s.id === stageId ? { ...s, status: "completed" as const } : s
+          )
+        }));
+      }
+      
+      const newHealth = await fetch("/health").then(r => r.json());
+      setHealth(newHealth);
+      const newAlerts = await fetch("/api/v1/alerts/?page_size=5").then(r => r.json());
+      setAlerts(newAlerts.items || []);
+      
+    } catch (error) {
+      console.error("Failed to start system:", error);
+      setSystemStatus(prev => ({
+        ...prev,
+        isRunning: false,
+        stages: prev.stages.map(s => ({ ...s, status: "error" as const }))
+      }));
+    }
+  };
+
+  const stopSystem = () => {
+    setSystemStatus(prev => ({
+      ...prev,
+      isRunning: false,
+      stages: prev.stages.map(s => ({ ...s, status: "idle" as const }))
+    }));
+  };
 
   useEffect(() => {
     Promise.all([
       fetch("/health").then(r => r.json()),
-      fetch("/api/v1/alerts?page_size=5").then(r => r.json())
+      fetch("/api/v1/alerts/?page_size=5").then(r => r.json())
     ]).then(([healthData, alertsData]) => {
       setHealth(healthData);
       setAlerts(alertsData.items || []);
@@ -87,6 +161,82 @@ export default function Dashboard() {
             <kpi.icon className={cn("absolute -bottom-4 -right-4 w-24 h-24 opacity-5 group-hover:opacity-10 transition-opacity", kpi.color)} />
           </motion.div>
         ))}
+      </div>
+
+      <div className="bg-surface-container-low rounded-2xl p-6 border border-outline-variant/10">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className={cn("w-3 h-3 rounded-full animate-pulse", systemStatus.isRunning ? "bg-green-500" : "bg-outline-variant")}></div>
+            <h2 className="text-lg font-bold tracking-tight text-on-surface">System Workflow Status</h2>
+            <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-bold tracking-tighter uppercase", 
+              systemStatus.isRunning ? "bg-green-900/30 text-green-400" : "bg-surface-container text-on-surface-variant")}>
+              {systemStatus.isRunning ? "Running" : "Idle"}
+            </span>
+          </div>
+          <div className="flex gap-3">
+            {!systemStatus.isRunning ? (
+              <button onClick={startSystem} className="flex items-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-lg font-bold text-xs uppercase tracking-widest hover:opacity-90 transition-opacity">
+                <Play className="w-4 h-4" />
+                Start System
+              </button>
+            ) : (
+              <button onClick={stopSystem} className="flex items-center gap-2 px-4 py-2 bg-error text-white rounded-lg font-bold text-xs uppercase tracking-widest hover:opacity-90 transition-opacity">
+                <Square className="w-4 h-4" />
+                Stop
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-5 gap-4">
+          {systemStatus.stages.map((stage, index) => {
+            const Icon = stage.icon;
+            const isActive = stage.status === "running";
+            const isComplete = stage.status === "completed";
+            const isError = stage.status === "error";
+            
+            return (
+              <div key={stage.id} className={cn(
+                "relative p-4 rounded-xl border transition-all duration-500",
+                isActive ? "bg-primary/10 border-primary/30" :
+                isComplete ? "bg-green-900/20 border-green-500/30" :
+                isError ? "bg-red-900/20 border-red-500/30" :
+                "bg-surface-container border-outline-variant/10"
+              )}>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className={cn(
+                    "w-8 h-8 rounded-lg flex items-center justify-center",
+                    isActive ? "bg-primary text-on-primary animate-pulse" :
+                    isComplete ? "bg-green-500 text-white" :
+                    isError ? "bg-error text-white" :
+                    "bg-surface-container-highest text-on-surface-variant"
+                  )}>
+                    <Icon className="w-4 h-4" />
+                  </div>
+                  {index < systemStatus.stages.length - 1 && (
+                    <div className={cn("flex-1 h-0.5", 
+                      isComplete ? "bg-green-500" : "bg-outline-variant/30"
+                    )}></div>
+                  )}
+                </div>
+                <p className={cn("text-xs font-bold mb-1", 
+                  isActive || isComplete ? "text-on-surface" : "text-on-surface-variant"
+                )}>{stage.name}</p>
+                <p className="text-[10px] text-on-surface-variant">{stage.description}</p>
+                {isActive && (
+                  <div className="absolute top-2 right-2">
+                    <div className="w-2 h-2 bg-primary rounded-full animate-ping"></div>
+                  </div>
+                )}
+                {isComplete && (
+                  <div className="absolute top-2 right-2">
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <div className="grid grid-cols-12 gap-8">

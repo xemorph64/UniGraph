@@ -149,7 +149,7 @@ export default function Alerts() {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/v1/alerts?status=${statusFilter}&page_size=50`)
+    fetch(`/api/v1/alerts/?status=${statusFilter}&page_size=50`)
       .then(res => res.json())
       .then(data => {
         setAlerts(data.items || []);

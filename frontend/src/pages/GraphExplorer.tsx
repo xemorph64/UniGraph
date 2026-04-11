@@ -18,16 +18,21 @@ import {
   ExternalLink, 
   AlertTriangle,
   Search,
-  Maximize2
+  Maximize2,
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
 import { cn } from "@/src/lib/utils";
 
 interface GraphNode {
   id: string;
-  label: string;
+  label?: string;
   type?: string;
   risk_score?: number;
   risk_level?: string;
+  account_type?: string;
+  kyc_tier?: number;
+  is_dormant?: boolean;
 }
 
 interface GraphEdge {
@@ -36,6 +41,7 @@ interface GraphEdge {
   target: string;
   label?: string;
   type?: string;
+  amount?: number;
 }
 
 function convertToReactFlow(nodes: GraphNode[], edges: GraphEdge[]) {
@@ -54,60 +60,102 @@ function convertToReactFlow(nodes: GraphNode[], edges: GraphEdge[]) {
   });
   
   const rfNodes = nodes.map((n, i) => {
-    const isHighRisk = (n.risk_level === "HIGH" || n.risk_level === "CRITICAL");
+    const risk = n.risk_score || 0;
+    const isHighRisk = risk > 70;
+    const isMediumRisk = risk > 40;
     const pos = nodeMap[n.id] || { x: 200 + (i % 4) * 150, y: 150 + Math.floor(i / 4) * 150 };
+    const nodeId = n.id || n.label;
+    
     return {
-      id: n.id,
+      id: nodeId,
       type: 'default',
-      data: { label: n.label || n.id },
+      data: { label: nodeId },
       position: pos,
       style: {
-        background: isHighRisk ? '#3a0007' : '#001b22',
-        color: isHighRisk ? '#ef3b4d' : '#00d9ff',
-        border: `2px solid ${isHighRisk ? '#ef3b4d' : '#00d9ff'}`,
+        background: isHighRisk ? '#3a0007' : isMediumRisk ? '#1a2200' : '#001b22',
+        color: isHighRisk ? '#ef3b4d' : isMediumRisk ? '#a3e635' : '#00d9ff',
+        border: `2px solid ${isHighRisk ? '#ef3b4d' : isMediumRisk ? '#a3e635' : '#00d9ff'}`,
         borderRadius: '50%',
-        width: isHighRisk ? 70 : 60,
-        height: isHighRisk ? 70 : 60,
+        width: isHighRisk ? 75 : 60,
+        height: isHighRisk ? 75 : 60,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        fontSize: '8px',
+        fontSize: '7px',
         fontWeight: 'bold'
       }
     };
   });
   
-  const rfEdges = edges.map((e, i) => ({
-    id: e.id || `e${i}`,
-    source: e.source,
-    target: e.target,
-    label: e.label,
-    animated: e.type === 'HIGH_RISK',
-    style: { stroke: e.type === 'HIGH_RISK' ? '#ef3b4d' : '#00d9ff', strokeWidth: e.type === 'HIGH_RISK' ? 2 : 1 },
-    markerEnd: e.type === 'HIGH_RISK' ? { type: MarkerType.ArrowClosed, color: '#ef3b4d' } : undefined
-  }));
+  const rfEdges = edges.map((e, i) => {
+    const isHighRisk = e.type === 'HIGH_RISK' || (e.amount && e.amount > 500000);
+    return {
+      id: e.id || `e${i}`,
+      source: e.source,
+      target: e.target,
+      label: e.label || (e.amount ? `₹${(e.amount / 100000).toFixed(1)}L` : undefined),
+      animated: isHighRisk,
+      style: { stroke: isHighRisk ? '#ef3b4d' : '#00d9ff', strokeWidth: isHighRisk ? 2 : 1 },
+      markerEnd: isHighRisk ? { type: MarkerType.ArrowClosed, color: '#ef3b4d' } : { type: MarkerType.ArrowClosed, color: '#00d9ff' }
+    };
+  });
   
   return { rfNodes, rfEdges };
 }
 
 export default function GraphExplorer() {
-  const [selectedAccount, setSelectedAccount] = useState<string>("ACC-MULE-001");
+  const [selectedAccount, setSelectedAccount] = useState<string>("ACC-LAYER-001");
+  const [hops, setHops] = useState<number>(2);
   const [graphData, setGraphData] = useState<{nodes: GraphNode[], edges: GraphEdge[]} | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [fraudAccounts, setFraudAccounts] = useState<string[]>([]);
+  const [accountProfile, setAccountProfile] = useState<any>(null);
 
   useEffect(() => {
-    fetch(`/api/v1/accounts/${selectedAccount}/graph?hops=2`)
-      .then(res => res.json())
+    fetch("/health")
+      .then(r => r.json())
       .then(data => {
-        if (data.nodes && data.nodes.length > 0) {
-          const converted = convertToReactFlow(data.nodes, data.edges || []);
-          setNodes(converted.rfNodes);
-          setEdges(converted.rfEdges);
+        if (data.graph_stats?.accounts && data.graph_stats.accounts > 0) {
+          setFraudAccounts([
+            "ACC-LAYER-001",
+            "ACC-DORMANT-001",
+            "ACC-MULE-001"
+          ]);
         }
       })
       .catch(console.error);
-  }, [selectedAccount]);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedAccount) return;
+    
+    setLoading(true);
+    setError(null);
+    
+    Promise.all([
+      fetch(`/api/v1/accounts/${selectedAccount}/graph?hops=${hops}`).then(r => r.json()),
+      fetch(`/api/v1/accounts/${selectedAccount}/profile/`).then(r => r.json()).catch(() => null)
+    ])
+      .then(([graphData, profile]) => {
+        setGraphData(graphData);
+        setAccountProfile(profile);
+        if (graphData.nodes && graphData.nodes.length > 0) {
+          const converted = convertToReactFlow(graphData.nodes, graphData.edges || []);
+          setNodes(converted.rfNodes);
+          setEdges(converted.rfEdges);
+        } else {
+          setError("No connected nodes found for this account");
+        }
+      })
+      .catch(err => {
+        console.error(err);
+        setError("Failed to fetch graph data");
+      })
+      .finally(() => setLoading(false));
+  }, [selectedAccount, hops]);
 
   const onConnect = useCallback((params: Connection | Edge) => setEdges((eds) => addEdge(params, eds)), [setEdges]);
 
@@ -125,6 +173,41 @@ export default function GraphExplorer() {
         </h2>
         
         <div className="space-y-6">
+          <section>
+            <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider mb-3 block">Select Account</label>
+            <select 
+              value={selectedAccount}
+              onChange={(e) => setSelectedAccount(e.target.value)}
+              className="w-full bg-surface-container p-3 rounded-xl border border-outline-variant/10 text-sm text-on-surface focus:border-primary focus:outline-none"
+            >
+              <optgroup label="Fraud Scenarios">
+                <option value="ACC-LAYER-001">Rapid Layering (6-hop chain)</option>
+                <option value="ACC-DORMANT-001">Dormant Account Awakening</option>
+                <option value="ACC-MULE-001">Mule Network</option>
+              </optgroup>
+            </select>
+            <div className="mt-3 flex gap-2">
+              <button 
+                onClick={() => setHops(1)}
+                className={cn("flex-1 text-xs py-2 rounded-lg border", hops === 1 ? "bg-primary/20 border-primary text-primary" : "border-outline-variant text-on-surface-variant")}
+              >
+                1 Hop
+              </button>
+              <button 
+                onClick={() => setHops(2)}
+                className={cn("flex-1 text-xs py-2 rounded-lg border", hops === 2 ? "bg-primary/20 border-primary text-primary" : "border-outline-variant text-on-surface-variant")}
+              >
+                2 Hops
+              </button>
+              <button 
+                onClick={() => setHops(3)}
+                className={cn("flex-1 text-xs py-2 rounded-lg border", hops === 3 ? "bg-primary/20 border-primary text-primary" : "border-outline-variant text-on-surface-variant")}
+              >
+                3 Hops
+              </button>
+            </div>
+          </section>
+
           <section>
             <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider mb-3 block">Alert Type</label>
             <div className="space-y-2">
@@ -175,6 +258,20 @@ export default function GraphExplorer() {
 
       {/* Graph Canvas */}
       <div className="flex-1 relative bg-surface-dim overflow-hidden">
+        {loading && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-surface-dim/80">
+            <div className="flex items-center gap-3 bg-surface-container p-4 rounded-xl">
+              <Loader2 className="w-5 h-5 text-primary animate-spin" />
+              <span className="text-sm font-bold text-on-surface">Loading subgraph...</span>
+            </div>
+          </div>
+        )}
+        {error && (
+          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 bg-surface-container p-6 rounded-xl border border-error/30">
+            <p className="text-sm font-bold text-error">{error}</p>
+            <p className="text-xs text-on-surface-variant mt-2">Click "Start System" on Dashboard first</p>
+          </div>
+        )}
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -195,10 +292,12 @@ export default function GraphExplorer() {
         {/* Breadcrumbs/Graph Meta Overlay */}
         <div className="absolute top-6 left-6 flex items-center gap-2 z-10">
           <div className="bg-surface-container-high/60 backdrop-blur-xl px-4 py-2 rounded-full border border-outline-variant/10 flex items-center gap-3">
-            <span className="text-xs font-bold text-on-surface-variant uppercase tracking-tighter">Current Scope:</span>
-            <span className="text-xs text-primary font-semibold">Tier 1 Connections</span>
+            <span className="text-xs font-bold text-on-surface-variant uppercase tracking-tighter">Scope:</span>
+            <span className="text-xs text-primary font-semibold">{selectedAccount}</span>
             <div className="w-1.5 h-1.5 rounded-full bg-outline-variant"></div>
-            <span className="text-xs text-on-surface-variant font-medium">Nodes: 1,422</span>
+            <span className="text-xs text-on-surface-variant font-medium">{hops}-hop</span>
+            <div className="w-1.5 h-1.5 rounded-full bg-outline-variant"></div>
+            <span className="text-xs text-on-surface-variant font-medium">Nodes: {nodes.length}</span>
           </div>
         </div>
       </div>
@@ -209,7 +308,7 @@ export default function GraphExplorer() {
           <div className="flex justify-between items-start mb-8">
             <div>
               <h3 className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mb-1">Entity Profile</h3>
-              <h2 className="text-lg font-bold text-primary tracking-tight">ACC_99283401</h2>
+              <h2 className="text-lg font-bold text-primary tracking-tight">{selectedAccount}</h2>
             </div>
             <button className="p-2 text-on-surface-variant hover:text-white transition-colors">
               <ExternalLink className="w-5 h-5" />
@@ -218,35 +317,55 @@ export default function GraphExplorer() {
 
           <div className="space-y-8">
             {/* Risk Score Card */}
-            <div className="bg-tertiary-container/30 border border-tertiary/20 p-5 rounded-2xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-tertiary/5 blur-3xl rounded-full -mr-12 -mt-12"></div>
+            <div className={cn(
+              "border p-5 rounded-2xl relative overflow-hidden",
+              accountProfile?.risk_score > 70 ? "bg-tertiary-container/30 border-tertiary/20" :
+              accountProfile?.risk_score > 40 ? "bg-orange-900/20 border-orange-500/20" :
+              "bg-surface-container border-outline-variant/10"
+            )}>
+              <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 blur-3xl rounded-full -mr-12 -mt-12"></div>
               <div className="relative z-10">
                 <div className="flex justify-between items-center mb-4">
-                  <span className="text-xs font-bold text-tertiary uppercase tracking-tighter">Fraud Risk Score</span>
-                  <AlertTriangle className="text-tertiary w-5 h-5" />
+                  <span className="text-xs font-bold text-on-surface-variant uppercase tracking-tighter">Fraud Risk Score</span>
+                  <AlertTriangle className={cn("w-5 h-5", accountProfile?.risk_score > 70 ? "text-tertiary" : "text-primary")} />
                 </div>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-5xl font-black text-tertiary tracking-tighter">85</span>
-                  <span className="text-sm font-medium text-tertiary/60">/ 100</span>
+                  <span className={cn("text-5xl font-black tracking-tighter", 
+                    accountProfile?.risk_score > 70 ? "text-tertiary" :
+                    accountProfile?.risk_score > 40 ? "text-orange-400" : "text-on-surface"
+                  )}>
+                    {Math.round(accountProfile?.risk_score || 0)}
+                  </span>
+                  <span className="text-sm font-medium text-on-surface-variant">/ 100</span>
                 </div>
-                <div className="mt-4 h-1.5 w-full bg-tertiary/10 rounded-full overflow-hidden">
-                  <div className="h-full bg-tertiary w-[85%]"></div>
+                <div className="mt-4 h-1.5 w-full bg-surface-container-highest rounded-full overflow-hidden">
+                  <div className={cn("h-full", 
+                    accountProfile?.risk_score > 70 ? "bg-tertiary" :
+                    accountProfile?.risk_score > 40 ? "bg-orange-400" : "bg-primary"
+                  )} style={{ width: `${accountProfile?.risk_score || 0}%` }}></div>
                 </div>
-                <p className="mt-3 text-[10px] text-tertiary/80 font-medium">CRITICAL: High velocity in dormant account.</p>
+                <p className="mt-3 text-[10px] text-on-surface-variant font-medium">
+                  {accountProfile?.risk_score > 70 ? "HIGH RISK: Immediate action required" :
+                   accountProfile?.risk_score > 40 ? "MEDIUM RISK: Monitor closely" :
+                   "LOW RISK: Normal activity"}
+                </p>
               </div>
             </div>
 
             {/* Metadata Grid */}
             <div className="grid grid-cols-1 gap-6">
               {[
-                { label: "Last Activity", value: "Oct 24, 2023 - 14:22:10 UTC" },
-                { label: "Account Holder", value: "Private Entity - High Wealth" },
-                { label: "KYC Status", value: "Tier 3 Verified", status: "success" },
+                { label: "Account Type", value: accountProfile?.account_type || "SAVINGS" },
+                { label: "KYC Tier", value: `Tier ${accountProfile?.kyc_tier || 1}` },
+                { label: "Dormant", value: accountProfile?.is_dormant ? "Yes" : "No", status: accountProfile?.is_dormant ? "warning" : "success" },
+                { label: "Community ID", value: accountProfile?.community_id || "N/A" },
+                { label: "PageRank", value: accountProfile?.pagerank ? accountProfile.pagerank.toFixed(3) : "N/A" },
               ].map(meta => (
                 <div key={meta.label} className="space-y-1">
                   <label className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">{meta.label}</label>
                   <div className="flex items-center gap-2">
                     {meta.status === "success" && <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>}
+                    {meta.status === "warning" && <div className="w-1.5 h-1.5 rounded-full bg-orange-500"></div>}
                     <p className="text-sm font-medium">{meta.value}</p>
                   </div>
                 </div>
