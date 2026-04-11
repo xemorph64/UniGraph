@@ -1,0 +1,27 @@
+name: Infra Stack Smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  infra-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start core stack
+        run: docker compose -f docker/docker-compose.yml up -d
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install smoke dependencies
+        run: pip install httpx
+
+      - name: Run infra smoke checks
+        run: python scripts/infra_stack_smoke.py --compose-file docker/docker-compose.yml --timeout 12
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down -v
