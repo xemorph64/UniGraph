@@ -1,7 +1,8 @@
 import { LayoutDashboard, AlertTriangle, GitGraph, Monitor, FileText, Bot, Settings } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
-import { alertCards } from "@/data/alerts-data";
+import { useEffect, useState } from "react";
+import { listAlerts } from "@/lib/unigraph-api";
 import {
   Sidebar,
   SidebarContent,
@@ -17,21 +18,44 @@ import {
 } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-const alertCount = alertCards.length;
-
-const mainItems = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Alerts & Cases", url: "/alerts", icon: AlertTriangle, badge: alertCount },
-  { title: "Graph Explorer", url: "/graph", icon: GitGraph },
-  { title: "Transaction Monitor", url: "/transactions", icon: Monitor },
-  { title: "STR Generator", url: "/str-generator", icon: FileText },
-  { title: "Investigator Copilot", url: "/copilot", icon: Bot },
-];
-
 export function AppSidebar() {
   const { state, toggleSidebar } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
+  const [alertCount, setAlertCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadCount = async () => {
+      try {
+        const response = await listAlerts({ page: 1, pageSize: 1 });
+        if (mounted) {
+          setAlertCount(response.total ?? response.items.length);
+        }
+      } catch {
+        if (mounted) {
+          setAlertCount(null);
+        }
+      }
+    };
+
+    loadCount();
+    const poller = setInterval(loadCount, 15000);
+    return () => {
+      mounted = false;
+      clearInterval(poller);
+    };
+  }, []);
+
+  const mainItems = [
+    { title: "Dashboard", url: "/", icon: LayoutDashboard },
+    { title: "Alerts & Cases", url: "/alerts", icon: AlertTriangle, badge: alertCount ?? undefined },
+    { title: "Graph Explorer", url: "/graph", icon: GitGraph },
+    { title: "Transaction Monitor", url: "/transactions", icon: Monitor },
+    { title: "STR Generator", url: "/str-generator", icon: FileText },
+    { title: "Investigator Copilot", url: "/copilot", icon: Bot },
+  ];
 
   const isActive = (url: string) => url === "/" ? location.pathname === "/" : location.pathname.startsWith(url);
 

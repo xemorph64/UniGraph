@@ -1,38 +1,22 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Activity, AlertTriangle, ShieldAlert, FileCheck, TrendingUp, Target, ArrowUpRight } from "lucide-react";
-import { generateTransactions, type Transaction } from "@/data/transactions";
-import { alertCards } from "@/data/alerts-data";
 import RiskScoreBar, { getRiskColor } from "@/components/RiskScoreBar";
 import {
-  BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart, Line, Area, AreaChart, LabelList,
+  connectAlertsWebSocket,
+  getTransaction,
+  listAlerts,
+  listTransactions,
+  toAlertCard,
+  toUiTransaction,
+  type AlertCardLike,
+  type BackendTransaction,
+} from "@/lib/unigraph-api";
+import type { Transaction } from "@/data/transactions";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  Area, AreaChart, LabelList,
 } from "recharts";
-
-const kpiCards = [
-  { label: "Total Transactions Today", value: "8,64,320", sub: "↑ 3.2% from yesterday", icon: Activity, borderColor: "hsl(var(--info))", iconBg: "hsl(214, 95%, 93%)", iconColor: "hsl(var(--info))" },
-  { label: "Active Alerts", value: String(alertCards.length), sub: `${alertCards.filter(a => a.riskScore >= 90).length} critical priority`, icon: AlertTriangle, borderColor: "hsl(var(--danger))", iconBg: "hsl(0, 86%, 97%)", iconColor: "hsl(var(--danger))" },
-  { label: "Open Cases", value: "23", sub: "5 escalated this week", icon: ShieldAlert, borderColor: "hsl(var(--warning))", iconBg: "hsl(48, 96%, 89%)", iconColor: "hsl(var(--warning))" },
-  { label: "STR Filed Today", value: "3", sub: "2 pending FIU-IND", icon: FileCheck, borderColor: "hsl(var(--success))", iconBg: "hsl(149, 80%, 90%)", iconColor: "hsl(var(--success))" },
-  { label: "Avg Risk Score", value: "74.2", sub: "↑ from 68.1 last week", icon: TrendingUp, borderColor: "hsl(263, 70%, 50%)", iconBg: "hsl(263, 70%, 96%)", iconColor: "hsl(263, 70%, 50%)" },
-  { label: "Detection Rate", value: "94.3%", sub: "False positive: 8.3%", icon: Target, borderColor: "hsl(188, 86%, 40%)", iconBg: "hsl(188, 86%, 95%)", iconColor: "hsl(188, 86%, 40%)" },
-];
-
-const fraudBarData = [
-  { name: "Rapid Layering", count: 13 },
-  { name: "Round-Tripping", count: 9 },
-  { name: "Structuring", count: 11 },
-  { name: "Dormant Activation", count: 6 },
-  { name: "Profile Mismatch", count: 8 },
-  { name: "Mule Account", count: 7 },
-];
-
-const alertVolumeData = Array.from({ length: 30 }, (_, i) => ({
-  day: `D${i + 1}`,
-  alerts: Math.floor(15 + Math.random() * 40 + Math.sin(i / 5) * 10),
-}));
-
-const recentAlerts = alertCards.slice(0, 5);
 
 const fraudTypeColors: Record<string, string> = {
   "Rapid Layering": "hsl(0, 72%, 51%)",
@@ -45,21 +29,111 @@ const fraudTypeColors: Record<string, string> = {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [transactions, setTransactions] = useState<Transaction[]>(() => generateTransactions(15));
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [alerts, setAlerts] = useState<AlertCardLike[]>([]);
+  const [transactionTotal, setTransactionTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [newRowId, setNewRowId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTransactions((prev) => {
-        const newTxn = generateTransactions(1)[0];
-        newTxn.txnId = `TXN-${Date.now().toString().slice(-6)}`;
-        setNewRowId(newTxn.txnId);
-        setTimeout(() => setNewRowId(null), 1000);
-        return [newTxn, ...prev.slice(0, 14)];
-      });
-    }, 3000);
-    return () => clearInterval(interval);
+  const loadData = useCallback(async () => {
+    try {
+      const [txnResp, alertResp] = await Promise.all([
+        listTransactions({ page: 1, pageSize: 120 }),
+        listAlerts({ page: 1, pageSize: 120 }),
+      ]);
+
+      const txnById = new Map<string, BackendTransaction>();
+      txnResp.items.forEach((txn) => txnById.set(txn.id, txn));
+
+      setTransactions(txnResp.items.slice(0, 15).map(toUiTransaction));
+      setAlerts(alertResp.items.map((alert) => toAlertCard(alert, txnById.get(alert.transaction_id))));
+      setTransactionTotal(txnResp.total || txnResp.items.length);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load dashboard data");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadData();
+    const poller = setInterval(loadData, 15000);
+    return () => clearInterval(poller);
+  }, [loadData]);
+
+  useEffect(() => {
+    const disconnect = connectAlertsWebSocket(
+      "dashboard-ui",
+      async (incomingAlert) => {
+        setAlerts((prev) => [toAlertCard(incomingAlert), ...prev.filter((a) => a.id !== incomingAlert.id)].slice(0, 120));
+        if (!incomingAlert.transaction_id) return;
+
+        try {
+          const txn = await getTransaction(incomingAlert.transaction_id);
+          const mapped = toUiTransaction(txn);
+          setTransactions((prev) => [mapped, ...prev.filter((t) => t.txnId !== mapped.txnId)].slice(0, 15));
+          setNewRowId(mapped.txnId);
+          setTimeout(() => setNewRowId(null), 1000);
+        } catch {
+          // Non-fatal: alert still appears even if transaction detail fetch fails.
+        }
+      },
+      setWsConnected,
+    );
+
+    return disconnect;
+  }, []);
+
+  const criticalAlerts = useMemo(() => alerts.filter((a) => a.riskScore >= 90).length, [alerts]);
+
+  const avgRisk = useMemo(() => {
+    if (!alerts.length) return "0.0";
+    const sum = alerts.reduce((acc, item) => acc + item.riskScore, 0);
+    return (sum / alerts.length).toFixed(1);
+  }, [alerts]);
+
+  const detectionRate = useMemo(() => {
+    if (!transactions.length) return "0.0%";
+    const risky = transactions.filter((txn) => txn.riskScore >= 60).length;
+    return `${((risky / transactions.length) * 100).toFixed(1)}%`;
+  }, [transactions]);
+
+  const kpiCards = useMemo(() => [
+    { label: "Total Transactions", value: transactionTotal.toLocaleString("en-IN"), sub: "live from backend", icon: Activity, borderColor: "hsl(var(--info))", iconBg: "hsl(214, 95%, 93%)", iconColor: "hsl(var(--info))" },
+    { label: "Active Alerts", value: String(alerts.length), sub: `${criticalAlerts} critical priority`, icon: AlertTriangle, borderColor: "hsl(var(--danger))", iconBg: "hsl(0, 86%, 97%)", iconColor: "hsl(var(--danger))" },
+    { label: "Open Cases", value: String(alerts.filter((a) => a.status !== "STR FILED").length), sub: "derived from alert status", icon: ShieldAlert, borderColor: "hsl(var(--warning))", iconBg: "hsl(48, 96%, 89%)", iconColor: "hsl(var(--warning))" },
+    { label: "STR Filed", value: String(alerts.filter((a) => a.status === "STR FILED").length), sub: "from workflow state", icon: FileCheck, borderColor: "hsl(var(--success))", iconBg: "hsl(149, 80%, 90%)", iconColor: "hsl(var(--success))" },
+    { label: "Avg Risk Score", value: avgRisk, sub: "current live alert set", icon: TrendingUp, borderColor: "hsl(263, 70%, 50%)", iconBg: "hsl(263, 70%, 96%)", iconColor: "hsl(263, 70%, 50%)" },
+    { label: "Detection Rate", value: detectionRate, sub: "risk >= 60 in live feed", icon: Target, borderColor: "hsl(188, 86%, 40%)", iconBg: "hsl(188, 86%, 95%)", iconColor: "hsl(188, 86%, 40%)" },
+  ], [transactionTotal, alerts, criticalAlerts, avgRisk, detectionRate]);
+
+  const fraudBarData = useMemo(() => {
+    const counts = new Map<string, number>();
+    alerts.forEach((alert) => {
+      counts.set(alert.fraudType, (counts.get(alert.fraudType) || 0) + 1);
+    });
+
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6);
+  }, [alerts]);
+
+  const alertVolumeData = useMemo(() => {
+    const byDay = new Map<string, number>();
+    alerts.forEach((alert) => {
+      const day = alert.timeDetected.split(" ")[0] || "Unknown";
+      byDay.set(day, (byDay.get(day) || 0) + 1);
+    });
+
+    const entries = Array.from(byDay.entries()).slice(-30);
+    return entries.map(([day, count]) => ({ day, alerts: count }));
+  }, [alerts]);
+
+  const recentAlerts = useMemo(() => alerts.slice(0, 5), [alerts]);
 
   return (
     <div className="space-y-5">
@@ -67,9 +141,10 @@ export default function Dashboard() {
       <div>
         <h1 className="text-xl font-bold text-primary">Dashboard Overview</h1>
         <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-1">
-          Real-time AML monitoring · Updated live
-          <span className="w-2 h-2 rounded-full bg-success animate-pulse-dot" />
+          Real-time AML monitoring · {wsConnected ? "Live stream connected" : "Polling mode"}
+          <span className={`w-2 h-2 rounded-full ${wsConnected ? "bg-success animate-pulse-dot" : "bg-warning"}`} />
         </p>
+        {error && <p className="text-xs text-danger mt-1">{error}</p>}
       </div>
 
       {/* KPI Cards */}
@@ -103,7 +178,7 @@ export default function Dashboard() {
             <span className="w-2 h-2 rounded-full bg-success animate-pulse-dot" />
             <span className="bg-danger text-white text-[9px] font-bold px-2 py-0.5 rounded-full ml-1">LIVE</span>
           </div>
-          <div className="max-h-[520px] overflow-y-auto scrollbar-thin">
+            <div className="max-h-[520px] overflow-y-auto scrollbar-thin">
             <table className="w-full" style={{ borderCollapse: "collapse", tableLayout: "fixed" }}>
               <thead>
                 <tr className="bg-table-header text-table-header-foreground text-[11px] font-semibold tracking-wide uppercase">
@@ -118,6 +193,13 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
+                {!loading && transactions.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="p-4 text-center text-muted-foreground text-sm">
+                      No transactions available from backend yet.
+                    </td>
+                  </tr>
+                )}
                 {transactions.map((t, i) => (
                   <tr
                     key={t.txnId + i}
@@ -215,6 +297,13 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
+              {!loading && recentAlerts.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="p-4 text-center text-muted-foreground text-sm">
+                    No alerts available yet.
+                  </td>
+                </tr>
+              )}
               {recentAlerts.map((a, i) => (
                 <tr
                   key={a.id}
@@ -237,7 +326,7 @@ export default function Dashboard() {
                       <RiskScoreBar score={a.riskScore} size="sm" />
                     </div>
                   </td>
-                  <td className="p-3 text-xs text-muted-foreground">{a.timeDetected.split(" ")[1]}</td>
+                  <td className="p-3 text-xs text-muted-foreground">{a.timeDetected.split(" ")[1] || "-"}</td>
                   <td className="p-3 text-right">
                     <button
                       className="text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded font-semibold hover:bg-primary/90 cursor-pointer inline-flex items-center gap-1"

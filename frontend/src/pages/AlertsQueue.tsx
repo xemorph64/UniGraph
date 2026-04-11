@@ -1,8 +1,15 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, ArrowRight, Filter } from "lucide-react";
-import { alertCards } from "@/data/alerts-data";
+import { Search, ArrowRight } from "lucide-react";
 import RiskScoreBar, { getRiskColor } from "@/components/RiskScoreBar";
+import {
+  connectAlertsWebSocket,
+  getTransaction,
+  listAlerts,
+  listTransactions,
+  toAlertCard,
+  type AlertCardLike,
+} from "@/lib/unigraph-api";
 
 type Priority = "CRITICAL" | "HIGH" | "MEDIUM";
 type StatusType = "OPEN" | "UNDER REVIEW" | "STR FILED";
@@ -27,25 +34,28 @@ function getPriority(score: number): Priority {
   return "MEDIUM";
 }
 
-function getStatus(idx: number): StatusType {
-  if (idx < 6) return "OPEN";
-  if (idx < 12) return "UNDER REVIEW";
-  return "STR FILED";
+function mapBackendStatus(status?: string): StatusType {
+  if (!status || status === "OPEN") return "OPEN";
+  if (status === "INVESTIGATING" || status === "ESCALATED") return "UNDER REVIEW";
+  if (status === "FILED" || status === "CLOSED") return "STR FILED";
+  return "UNDER REVIEW";
 }
 
-const alerts: AlertItem[] = alertCards.map((a, idx) => ({
-  id: a.id,
-  account: a.account,
-  fraudType: a.fraudType,
-  amount: a.amount,
-  channel: a.channel,
-  date: a.timeDetected.split(" ").slice(0, 1).join(""),
-  description: a.description,
-  priority: getPriority(a.riskScore),
-  riskScore: a.riskScore,
-  status: getStatus(idx),
-  strDeadlineDays: Math.max(1, Math.floor(Math.random() * 12) + 1),
-}));
+function toAlertItem(card: AlertCardLike, index: number): AlertItem {
+  return {
+    id: card.id,
+    account: card.account,
+    fraudType: card.fraudType,
+    amount: card.amount,
+    channel: card.channel,
+    date: card.timeDetected.split(" ")[0] || "-",
+    description: card.description,
+    priority: getPriority(card.riskScore),
+    riskScore: card.riskScore,
+    status: mapBackendStatus(card.status),
+    strDeadlineDays: Math.max(1, 10 - index),
+  };
+}
 
 const priorityBorder: Record<Priority, string> = {
   CRITICAL: "border-l-[3px] border-l-risk-critical",
@@ -80,17 +90,67 @@ const fraudTypes = ["All Types", "Rapid Layering", "Round-Tripping", "Structurin
 
 export default function AlertsQueue() {
   const navigate = useNavigate();
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [wsConnected, setWsConnected] = useState(false);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<TabKey>("all");
   const [sortBy, setSortBy] = useState("date");
   const [typeFilter, setTypeFilter] = useState("All Types");
+
+  const loadAlerts = useCallback(async () => {
+    try {
+      const [alertResp, txnResp] = await Promise.all([
+        listAlerts({ page: 1, pageSize: 200 }),
+        listTransactions({ page: 1, pageSize: 500 }),
+      ]);
+
+      const txnById = new Map(txnResp.items.map((txn) => [txn.id, txn]));
+      const mapped = alertResp.items.map((alert, index) => {
+        const card = toAlertCard(alert, txnById.get(alert.transaction_id));
+        return toAlertItem(card, index);
+      });
+      setAlerts(mapped);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load alerts");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAlerts();
+    const poller = setInterval(loadAlerts, 15000);
+    return () => clearInterval(poller);
+  }, [loadAlerts]);
+
+  useEffect(() => {
+    const disconnect = connectAlertsWebSocket(
+      "alerts-queue-ui",
+      async (incomingAlert) => {
+        try {
+          const txn = incomingAlert.transaction_id ? await getTransaction(incomingAlert.transaction_id) : undefined;
+          const item = toAlertItem(toAlertCard(incomingAlert, txn), 0);
+          setAlerts((prev) => [item, ...prev.filter((a) => a.id !== item.id)]);
+        } catch {
+          const item = toAlertItem(toAlertCard(incomingAlert), 0);
+          setAlerts((prev) => [item, ...prev.filter((a) => a.id !== item.id)]);
+        }
+      },
+      setWsConnected,
+    );
+
+    return disconnect;
+  }, []);
 
   const counts = useMemo(() => ({
     all: alerts.length,
     CRITICAL: alerts.filter(a => a.priority === "CRITICAL").length,
     HIGH: alerts.filter(a => a.priority === "HIGH").length,
     MEDIUM: alerts.filter(a => a.priority === "MEDIUM").length,
-  }), []);
+  }), [alerts]);
 
   const filtered = useMemo(() => {
     let result = alerts.filter((a) => {
@@ -103,6 +163,7 @@ export default function AlertsQueue() {
       return true;
     });
     if (sortBy === "risk") result = [...result].sort((a, b) => b.riskScore - a.riskScore);
+    if (sortBy === "date") result = [...result].sort((a, b) => b.id.localeCompare(a.id));
     return result;
   }, [search, activeTab, typeFilter, sortBy]);
 
@@ -122,8 +183,9 @@ export default function AlertsQueue() {
       <div>
         <h1 className="text-xl font-bold text-primary">Alerts & Cases</h1>
         <p className="text-xs text-muted-foreground mt-1">
-          {counts.all} alerts require attention · {criticalCount} critical · {highCount} high
+          {counts.all} alerts require attention · {criticalCount} critical · {highCount} high · {wsConnected ? "live" : "polling"}
         </p>
+        {error && <p className="text-xs text-danger mt-1">{error}</p>}
       </div>
 
       {/* Summary Stats */}
@@ -200,6 +262,9 @@ export default function AlertsQueue() {
 
       {/* Alert Cards */}
       <div className="flex flex-col gap-2">
+        {!loading && filtered.length === 0 && (
+          <div className="text-center py-12 text-muted-foreground text-sm">No alerts match your filters</div>
+        )}
         {filtered.map((a) => {
           const pStyle = priorityBadgeStyle[a.priority];
           return (
@@ -276,9 +341,6 @@ export default function AlertsQueue() {
             </div>
           );
         })}
-        {filtered.length === 0 && (
-          <div className="text-center py-12 text-muted-foreground text-sm">No alerts match your filters</div>
-        )}
       </div>
     </div>
   );

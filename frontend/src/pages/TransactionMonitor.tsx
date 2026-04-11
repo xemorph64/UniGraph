@@ -1,10 +1,11 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Download, Flag, Check, Info } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { generateTransactions, type Transaction } from "@/data/transactions";
+import type { Transaction } from "@/data/transactions";
 import RiskScoreBar, { getRiskColor, getRiskLabel } from "@/components/RiskScoreBar";
 import { toast } from "sonner";
+import { connectAlertsWebSocket, getTransaction, listTransactions, toUiTransaction } from "@/lib/unigraph-api";
 
 const CHANNELS = ["All", "UPI", "NEFT", "RTGS", "IMPS", "CASH", "Card"];
 const STATUSES = ["All", "Flagged", "Cleared", "Pending"];
@@ -18,7 +19,10 @@ const shapReasons: { feature: string; direction: "up" | "down"; value: number }[
 
 export default function TransactionMonitor() {
   const navigate = useNavigate();
-  const allTransactions = useMemo(() => generateTransactions(50), []);
+  const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [wsConnected, setWsConnected] = useState(false);
   const [channelFilter, setChannelFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [dateRange, setDateRange] = useState("Today");
@@ -29,6 +33,43 @@ export default function TransactionMonitor() {
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [exportLoading, setExportLoading] = useState(false);
   const [bulkFlagLoading, setBulkFlagLoading] = useState(false);
+
+  const loadTransactions = useCallback(async () => {
+    try {
+      const resp = await listTransactions({ page: 1, pageSize: 500 });
+      setAllTransactions(resp.items.map(toUiTransaction));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load transactions");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTransactions();
+    const poller = setInterval(loadTransactions, 15000);
+    return () => clearInterval(poller);
+  }, [loadTransactions]);
+
+  useEffect(() => {
+    const disconnect = connectAlertsWebSocket(
+      "transaction-monitor-ui",
+      async (alert) => {
+        if (!alert.transaction_id) return;
+        try {
+          const txn = await getTransaction(alert.transaction_id);
+          const mapped = toUiTransaction(txn);
+          setAllTransactions((prev) => [mapped, ...prev.filter((item) => item.txnId !== mapped.txnId)]);
+        } catch {
+          // Ignore if transaction lookup fails for a websocket event.
+        }
+      },
+      setWsConnected,
+    );
+
+    return disconnect;
+  }, []);
 
   const filtered = useMemo(() => {
     return allTransactions.filter((t) => {
@@ -43,7 +84,7 @@ export default function TransactionMonitor() {
   }, [allTransactions, channelFilter, statusFilter, search]);
 
   const paged = filtered.slice(page * perPage, (page + 1) * perPage);
-  const totalPages = Math.ceil(filtered.length / perPage);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
 
   const flaggedCount = filtered.filter(t => t.status === "Flagged").length;
   const clearedCount = filtered.filter(t => t.status === "Cleared").length;
@@ -69,7 +110,10 @@ export default function TransactionMonitor() {
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-bold text-primary">Transaction Monitor</h1>
-        <p className="text-xs text-muted-foreground mt-1">Real-time transaction surveillance · 8,64,320 transactions today</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Real-time transaction surveillance · {wsConnected ? "Live stream connected" : "Polling mode"}
+        </p>
+        {error && <p className="text-xs text-danger mt-1">{error}</p>}
       </div>
 
       {/* Filter Bar */}
@@ -160,6 +204,13 @@ export default function TransactionMonitor() {
               </tr>
             </thead>
             <tbody>
+              {!loading && paged.length === 0 && (
+                <tr>
+                  <td colSpan={11} className="p-4 text-center text-muted-foreground text-sm">
+                    No transactions match the current filters.
+                  </td>
+                </tr>
+              )}
               {paged.map((t, i) => (
                 <tr
                   key={t.txnId + i}
@@ -201,7 +252,9 @@ export default function TransactionMonitor() {
         </div>
         <div className="flex items-center justify-between p-3 border-t">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Showing {page * perPage + 1}–{Math.min((page + 1) * perPage, filtered.length)} of {filtered.length}</span>
+            <span className="text-xs text-muted-foreground">
+              Showing {filtered.length === 0 ? 0 : page * perPage + 1}–{Math.min((page + 1) * perPage, filtered.length)} of {filtered.length}
+            </span>
             <select
               value={perPage}
               onChange={(e) => { setPerPage(Number(e.target.value)); setPage(0); }}
