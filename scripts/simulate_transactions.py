@@ -70,6 +70,10 @@ class TransactionSimulator:
                     "device_fingerprint": f"sha256:dev-layer-{i:03d}",
                     "ip_address": f"10.0.1.{i + 1}",
                     "location": {"lat": 19.0760, "lon": 72.8777},
+                    "velocity_1h": 6,
+                    "velocity_24h": 6,
+                    "is_dormant": False,
+                    "device_account_count": 1,
                 }
             )
         return events
@@ -97,6 +101,10 @@ class TransactionSimulator:
                     "device_fingerprint": f"sha256:dev-struct-001",
                     "ip_address": "10.0.2.1",
                     "location": {"lat": 28.6139, "lon": 77.2090},
+                    "velocity_1h": 12,
+                    "velocity_24h": 12,
+                    "is_dormant": False,
+                    "device_account_count": 1,
                 }
             )
         return events
@@ -113,6 +121,10 @@ class TransactionSimulator:
             "device_fingerprint": "sha256:dev-new-001",
             "ip_address": "10.0.3.1",
             "location": {"lat": 12.9716, "lon": 77.5946},
+            "velocity_1h": 1,
+            "velocity_24h": 1,
+            "is_dormant": True,
+            "device_account_count": 1,
         }
 
     def _generate_mule_network(self) -> list[dict]:
@@ -138,6 +150,10 @@ class TransactionSimulator:
                     "device_fingerprint": mule_device,
                     "ip_address": f"10.0.4.{i + 1}",
                     "location": {"lat": 12.9716, "lon": 77.5946},
+                    "velocity_1h": 4,
+                    "velocity_24h": 4,
+                    "is_dormant": False,
+                    "device_account_count": 5,
                 }
             )
         return events
@@ -145,7 +161,7 @@ class TransactionSimulator:
     async def _post_transaction(self, txn: dict) -> Optional[dict]:
         try:
             response = await self.client.post(
-                f"{self.base_url}/api/v1/transactions",
+                f"{self.base_url}/api/v1/transactions/ingest",
                 json=txn,
             )
             self.stats["sent"] += 1

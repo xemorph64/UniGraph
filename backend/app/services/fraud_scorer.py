@@ -62,35 +62,35 @@ class FraudScorer:
         velocity_24h = txn.get("velocity_24h", 0)
 
         if amount > 500000:
-            risk_score += 20
-            shap_contributions.append(f"high_amount_₹{amount / 100000:.1f}L: +20")
+            risk_score += 25
+            shap_contributions.append(f"high_amount_₹{amount / 100000:.1f}L: +25")
         elif amount > 100000:
-            risk_score += 10
-            shap_contributions.append(f"elevated_amount_₹{amount / 100000:.1f}L: +10")
+            risk_score += 12
+            shap_contributions.append(f"elevated_amount_₹{amount / 100000:.1f}L: +12")
 
         if velocity_1h >= 5:
-            risk_score += 25
+            risk_score += 30
             rule_violations.append("RAPID_LAYERING")
-            shap_contributions.append(f"velocity_1h_{velocity_1h}_txns: +25")
+            shap_contributions.append(f"velocity_1h_{velocity_1h}_txns: +30")
         elif velocity_1h >= 3:
-            risk_score += 12
-            shap_contributions.append(f"elevated_velocity_1h_{velocity_1h}: +12")
+            risk_score += 18
+            shap_contributions.append(f"elevated_velocity_1h_{velocity_1h}: +18")
 
         if 800000 <= amount <= 990000:
-            risk_score += 22
+            risk_score += 28
             rule_violations.append("STRUCTURING")
-            shap_contributions.append("amount_near_ctr_threshold: +22")
+            shap_contributions.append("amount_near_ctr_threshold: +28")
 
         if is_dormant:
-            risk_score += 35
+            risk_score += 45
             rule_violations.append("DORMANT_AWAKENING")
-            shap_contributions.append("dormant_account_activity: +35")
+            shap_contributions.append("dormant_account_activity: +45")
 
         if device_account_count > 3:
-            risk_score += 30
+            risk_score += 40
             rule_violations.append("MULE_NETWORK")
             shap_contributions.append(
-                f"device_shared_{device_account_count}_accounts: +30"
+                f"device_shared_{device_account_count}_accounts: +40"
             )
 
         if channel in ["CASH", "SWIFT"]:
