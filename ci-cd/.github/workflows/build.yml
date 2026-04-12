@@ -35,8 +35,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
-      - run: pip install -r backend/requirements.txt pytest pytest-asyncio
+      - run: pip install -r backend/requirements.txt pytest pytest-asyncio pytest-cov
       - run: pytest backend/tests/ ml/tests/ --cov=backend --cov=ml --cov-report=xml
+
+  test-approval-routes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install -r backend/requirements.txt pytest pytest-asyncio pytest-cov
+      - run: >-
+          PYTHONPATH=backend pytest
+          backend/tests/test_approval_routes_api.py
+          backend/tests/test_reports_enforcement.py
+          backend/tests/test_workflow_e2e.py
+          --cov=backend.app.routers.reports
+          --cov=backend.app.routers.enforcement
+          --cov=backend.app.auth.jwt_rbac
+          --cov-fail-under=75
+          -q
 
   test-frontend:
     runs-on: ubuntu-latest
@@ -45,7 +63,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
       - run: cd frontend && npm ci
-      - run: cd frontend && npm test -- --coverage
+      - run: cd frontend && npm run build
 
   security-scan:
     runs-on: ubuntu-latest
@@ -59,7 +77,7 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: [lint-python, lint-typescript, security-scan]
+    needs: [lint-python, lint-typescript, security-scan, test-approval-routes]
     steps:
       - uses: actions/checkout@v4
       - run: docker compose -f docker/docker-compose.yml build

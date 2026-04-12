@@ -1,29 +1,45 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
-import Sidebar from "./components/Sidebar";
-import Header from "./components/Header";
-import Dashboard from "./pages/Dashboard";
-import GraphExplorer from "./pages/GraphExplorer";
-import Alerts from "./pages/Alerts";
-import STRReports from "./pages/STRReports";
+import { Toaster as Sonner } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import AppLayout from "@/components/AppLayout";
+import Dashboard from "@/pages/Dashboard";
+import AlertsQueue from "@/pages/AlertsQueue";
+import GraphExplorer from "@/pages/GraphExplorer";
+import TransactionMonitor from "@/pages/TransactionMonitor";
+import STRGenerator from "@/pages/STRGenerator";
+import CopilotPage from "@/pages/CopilotPage";
+import SettingsPage from "@/pages/SettingsPage";
+import TestCasesPage from "@/pages/TestCasesPage";
+import NotFound from "@/pages/NotFound";
 
-export default function App() {
-  return (
-    <Router>
-      <div className="flex min-h-screen bg-surface-dim text-on-surface">
-        <Sidebar />
-        <div className="flex-1 flex flex-col min-h-screen ml-64">
-          <Header />
-          <main className="flex-1 overflow-y-auto">
-            <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/graph-explorer" element={<GraphExplorer />} />
-              <Route path="/alerts" element={<Alerts />} />
-              <Route path="/str-reports" element={<STRReports />} />
-            </Routes>
-          </main>
-        </div>
-      </div>
-    </Router>
-  );
-}
+import { ThemeProvider } from "@/components/theme-provider";
+
+const queryClient = new QueryClient();
+
+const App = () => (
+  <QueryClientProvider client={queryClient}>
+    <ThemeProvider defaultTheme="dark" storageKey="unigraph-theme">
+      <TooltipProvider>
+        <Sonner />
+        <BrowserRouter>
+          <Routes>
+            <Route element={<AppLayout />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/alerts" element={<AlertsQueue />} />
+              <Route path="/graph" element={<GraphExplorer />} />
+              <Route path="/transactions" element={<TransactionMonitor />} />
+              <Route path="/str-generator" element={<STRGenerator />} />
+              <Route path="/copilot" element={<CopilotPage />} />
+              <Route path="/pipeline-status" element={<TestCasesPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </ThemeProvider>
+  </QueryClientProvider>
+);
+
+export default App;

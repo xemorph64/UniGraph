@@ -1,46 +1,44 @@
 #!/bin/bash
-KAFKA_BOOTSTRAP=kafka-1:9092
+set -euo pipefail
 
-kafka-topics --create --if-not-exists \
-  --bootstrap-server $KAFKA_BOOTSTRAP \
-  --topic raw-transactions \
-  --partitions 12 --replication-factor 3 \
-  --config retention.ms=604800000
+KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-kafka-1:9092}"
 
-kafka-topics --create --if-not-exists \
-  --bootstrap-server $KAFKA_BOOTSTRAP \
-  --topic enriched-transactions \
-  --partitions 12 --replication-factor 3 \
-  --config retention.ms=604800000
+echo "[kafka-init] Waiting for Kafka broker at ${KAFKA_BOOTSTRAP}..."
+until kafka-broker-api-versions --bootstrap-server "${KAFKA_BOOTSTRAP}" >/dev/null 2>&1; do
+  sleep 2
+done
 
-kafka-topics --create --if-not-exists \
-  --bootstrap-server $KAFKA_BOOTSTRAP \
-  --topic rule-violations \
-  --partitions 6 --replication-factor 3 \
-  --config retention.ms=259200000
+create_or_update_topic() {
+  local topic="$1"
+  local partitions="$2"
+  local replication_factor="$3"
+  local retention_ms="$4"
+  local min_isr="$5"
 
-kafka-topics --create --if-not-exists \
-  --bootstrap-server $KAFKA_BOOTSTRAP \
-  --topic ml-scores \
-  --partitions 12 --replication-factor 3 \
-  --config retention.ms=259200000
+  kafka-topics --create --if-not-exists \
+    --bootstrap-server "${KAFKA_BOOTSTRAP}" \
+    --topic "${topic}" \
+    --partitions "${partitions}" \
+    --replication-factor "${replication_factor}" \
+    --config "retention.ms=${retention_ms}" \
+    --config "min.insync.replicas=${min_isr}" >/dev/null
 
-kafka-topics --create --if-not-exists \
-  --bootstrap-server $KAFKA_BOOTSTRAP \
-  --topic alerts \
-  --partitions 6 --replication-factor 3 \
-  --config retention.ms=604800000
+  # Ensure critical durability settings are applied even if the topic already existed.
+  kafka-configs --bootstrap-server "${KAFKA_BOOTSTRAP}" \
+    --entity-type topics \
+    --entity-name "${topic}" \
+    --alter \
+    --add-config "retention.ms=${retention_ms},min.insync.replicas=${min_isr}" >/dev/null
+}
 
-kafka-topics --create --if-not-exists \
-  --bootstrap-server $KAFKA_BOOTSTRAP \
-  --topic training-queue \
-  --partitions 3 --replication-factor 3 \
-  --config retention.ms=2592000000
+create_or_update_topic raw-transactions 12 3 604800000 1
+create_or_update_topic enriched-transactions 12 3 604800000 1
+create_or_update_topic rule-violations 6 3 259200000 1
+create_or_update_topic ml-scores 12 3 259200000 1
+create_or_update_topic alerts 6 3 604800000 1
+create_or_update_topic training-queue 3 3 2592000000 1
 
 # Debezium heartbeats use a dedicated topic; RF=1 with min.insync.replicas=1 avoids local-cluster ISR deadlocks.
-kafka-topics --create --if-not-exists \
-  --bootstrap-server $KAFKA_BOOTSTRAP \
-  --topic __debezium-heartbeat.cbs \
-  --partitions 1 --replication-factor 1 \
-  --config min.insync.replicas=1 \
-  --config retention.ms=604800000
+create_or_update_topic __debezium-heartbeat.cbs 1 1 604800000 1
+
+echo "[kafka-init] Kafka topics are ready."

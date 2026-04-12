@@ -6,6 +6,7 @@ COPY ml/serving/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ml/ ./ml/
+COPY fraud_scenarios.sql ./fraud_scenarios.sql
 
 ARG MODEL_URL
 RUN mkdir -p /models

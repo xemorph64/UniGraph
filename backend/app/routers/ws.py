@@ -1,8 +1,10 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Dict
 import json
+import structlog
 
 router = APIRouter()
+logger = structlog.get_logger()
 
 
 class ConnectionManager:
@@ -18,8 +20,20 @@ class ConnectionManager:
 
     async def broadcast_alert(self, alert_data: dict):
         message = json.dumps({"type": "ALERT_FIRED", **alert_data})
-        for ws in self.active_connections.values():
-            await ws.send_text(message)
+        disconnected: list[str] = []
+        for investigator_id, ws in self.active_connections.items():
+            try:
+                await ws.send_text(message)
+            except Exception as exc:
+                logger.warning(
+                    "ws_alert_send_failed",
+                    investigator_id=investigator_id,
+                    error=str(exc),
+                )
+                disconnected.append(investigator_id)
+
+        for investigator_id in disconnected:
+            self.disconnect(investigator_id)
 
     async def send_personal(self, investigator_id: str, message: dict):
         ws = self.active_connections.get(investigator_id)

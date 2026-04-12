@@ -1,238 +1,346 @@
-import { 
-  TrendingUp, 
-  AlertCircle, 
-  Network, 
-  FileText, 
-  Eye, 
-  ChevronRight,
-  Zap,
-  ArrowUpRight
-} from "lucide-react";
-import { BarChart, Bar, XAxis, ResponsiveContainer, Tooltip, Cell } from "recharts";
-import { motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { cn } from "@/src/lib/utils";
+import { Activity, AlertTriangle, ShieldAlert, FileCheck, TrendingUp, Target, ArrowUpRight } from "lucide-react";
+import RiskScoreBar, { getRiskColor } from "@/components/RiskScoreBar";
+import {
+  connectAlertsWebSocket,
+  getTransaction,
+  listAlerts,
+  listTransactions,
+  toAlertCard,
+  toUiTransaction,
+  type AlertCardLike,
+  type BackendTransaction,
+} from "@/lib/unigraph-api";
+import type { Transaction } from "@/data/transactions";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  Area, AreaChart, LabelList,
+} from "recharts";
 
-interface HealthData {
-  status: string;
-  graph_stats: {
-    accounts: number;
-    transactions: number;
-    alerts: number;
-    open_alerts: number;
-  };
-  demo_mode: boolean;
-}
-
-interface Alert {
-  id: string;
-  account_id: string;
-  risk_score: number;
-  risk_level: string;
-  rule_flags: string[];
-}
+const fraudTypeColors: Record<string, string> = {
+  "Rapid Layering": "hsl(0, 72%, 51%)",
+  "Round-Tripping": "hsl(263, 70%, 50%)",
+  Structuring: "hsl(188, 86%, 40%)",
+  "Dormant Account Awakening": "hsl(32, 95%, 44%)",
+  "Mule Account Network": "hsl(var(--danger))",
+  Anomaly: "hsl(160, 84%, 29%)",
+};
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [health, setHealth] = useState<HealthData | null>(null);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [alerts, setAlerts] = useState<AlertCardLike[]>([]);
+  const [transactionTotal, setTransactionTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [newRowId, setNewRowId] = useState<string | null>(null);
 
-  useEffect(() => {
-    Promise.all([
-      fetch("/health").then(r => r.json()),
-      fetch("/api/v1/alerts?page_size=5").then(r => r.json())
-    ]).then(([healthData, alertsData]) => {
-      setHealth(healthData);
-      setAlerts(alertsData.items || []);
-    }).catch(console.error);
+  const loadData = useCallback(async () => {
+    try {
+      const [txnResp, alertResp] = await Promise.all([
+        listTransactions({ page: 1, pageSize: 120 }),
+        listAlerts({ page: 1, pageSize: 120 }),
+      ]);
+
+      const txnById = new Map<string, BackendTransaction>();
+      txnResp.items.forEach((txn) => txnById.set(txn.id, txn));
+
+      setTransactions(txnResp.items.slice(0, 15).map(toUiTransaction));
+      setAlerts(alertResp.items.map((alert) => toAlertCard(alert, txnById.get(alert.transaction_id))));
+      setTransactionTotal(txnResp.total || txnResp.items.length);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load dashboard data");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const kpiData = [
-    { label: "Total Alerts", value: health?.graph_stats?.alerts?.toString() || "0", sub: "From graph database", icon: AlertCircle, color: "text-primary", subIcon: TrendingUp },
-    { label: "High Risk Txns", value: health?.graph_stats?.transactions?.toString() || "0", sub: "Requires triage", icon: Zap, color: "text-error", subIcon: AlertCircle },
-    { label: "Fraud Networks", value: "3", sub: "Active clusters", icon: Network, color: "text-primary", subIcon: Network },
-    { label: "STR Pending", value: "0", sub: "Ready for review", icon: FileText, color: "text-on-surface", subIcon: TrendingUp },
-  ];
+  useEffect(() => {
+    loadData();
+    const poller = setInterval(loadData, 15000);
+    return () => clearInterval(poller);
+  }, [loadData]);
 
-  const criticalAlerts = alerts.filter(a => a.risk_level === "CRITICAL" || a.risk_level === "HIGH").slice(0, 4);
+  useEffect(() => {
+    const disconnect = connectAlertsWebSocket(
+      "dashboard-ui",
+      async (incomingAlert) => {
+        setAlerts((prev) => [toAlertCard(incomingAlert), ...prev.filter((a) => a.id !== incomingAlert.id)].slice(0, 120));
+        if (!incomingAlert.transaction_id) return;
 
-  const chartData = [
-    { name: "Mon", value: 40, color: "#00d9ff33" },
-    { name: "Tue", value: 65, color: "#00d9ff66" },
-    { name: "Wed", value: 85, color: "#ef3b4d66" },
-    { name: "Thu", value: 50, color: "#00d9ff4d" },
-    { name: "Fri", value: 30, color: "#00d9ff33" },
-  ];
+        try {
+          const txn = await getTransaction(incomingAlert.transaction_id);
+          const mapped = toUiTransaction(txn);
+          setTransactions((prev) => [mapped, ...prev.filter((t) => t.txnId !== mapped.txnId)].slice(0, 15));
+          setNewRowId(mapped.txnId);
+          setTimeout(() => setNewRowId(null), 1000);
+        } catch {
+          // Non-fatal: alert still appears even if transaction detail fetch fails.
+        }
+      },
+      setWsConnected,
+    );
+
+    return disconnect;
+  }, []);
+
+  const criticalAlerts = useMemo(() => alerts.filter((a) => a.riskScore >= 90).length, [alerts]);
+
+  const avgRisk = useMemo(() => {
+    if (!alerts.length) return "0.0";
+    const sum = alerts.reduce((acc, item) => acc + item.riskScore, 0);
+    return (sum / alerts.length).toFixed(1);
+  }, [alerts]);
+
+  const detectionRate = useMemo(() => {
+    if (!transactions.length) return "0.0%";
+    const risky = transactions.filter((txn) => txn.riskScore >= 60).length;
+    return `${((risky / transactions.length) * 100).toFixed(1)}%`;
+  }, [transactions]);
+
+  const kpiCards = useMemo(() => [
+    { label: "Total Transactions", value: transactionTotal.toLocaleString("en-IN"), sub: "live from backend", icon: Activity, borderColor: "hsl(var(--info))", iconBg: "hsl(214, 95%, 93%)", iconColor: "hsl(var(--info))" },
+    { label: "Active Alerts", value: String(alerts.length), sub: `${criticalAlerts} critical priority`, icon: AlertTriangle, borderColor: "hsl(var(--danger))", iconBg: "hsl(0, 86%, 97%)", iconColor: "hsl(var(--danger))" },
+    { label: "Open Cases", value: String(alerts.filter((a) => a.status !== "STR FILED").length), sub: "derived from alert status", icon: ShieldAlert, borderColor: "hsl(var(--warning))", iconBg: "hsl(48, 96%, 89%)", iconColor: "hsl(var(--warning))" },
+    { label: "STR Filed", value: String(alerts.filter((a) => a.status === "STR FILED").length), sub: "from workflow state", icon: FileCheck, borderColor: "hsl(var(--success))", iconBg: "hsl(149, 80%, 90%)", iconColor: "hsl(var(--success))" },
+    { label: "Avg Risk Score", value: avgRisk, sub: "current live alert set", icon: TrendingUp, borderColor: "hsl(263, 70%, 50%)", iconBg: "hsl(263, 70%, 96%)", iconColor: "hsl(263, 70%, 50%)" },
+    { label: "Detection Rate", value: detectionRate, sub: "risk >= 60 in live feed", icon: Target, borderColor: "hsl(188, 86%, 40%)", iconBg: "hsl(188, 86%, 95%)", iconColor: "hsl(188, 86%, 40%)" },
+  ], [transactionTotal, alerts, criticalAlerts, avgRisk, detectionRate]);
+
+  const fraudBarData = useMemo(() => {
+    const counts = new Map<string, number>();
+    alerts.forEach((alert) => {
+      counts.set(alert.fraudType, (counts.get(alert.fraudType) || 0) + 1);
+    });
+
+    return Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6);
+  }, [alerts]);
+
+  const alertVolumeData = useMemo(() => {
+    const byDay = new Map<string, number>();
+    alerts.forEach((alert) => {
+      const day = alert.timeDetected.split(" ")[0] || "Unknown";
+      byDay.set(day, (byDay.get(day) || 0) + 1);
+    });
+
+    const entries = Array.from(byDay.entries()).slice(-30);
+    return entries.map(([day, count]) => ({ day, alerts: count }));
+  }, [alerts]);
+
+  const recentAlerts = useMemo(() => alerts.slice(0, 5), [alerts]);
 
   return (
-    <div className="p-8 space-y-8 max-w-[1600px] mx-auto w-full">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {kpiData.map((kpi, i) => (
-          <motion.div 
-            key={kpi.label}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.1 }}
-            className="bg-surface-container p-6 rounded-xl relative overflow-hidden group glass-gradient border border-outline-variant/5"
+    <div className="space-y-5">
+      {/* Title */}
+      <div>
+        <h1 className="text-xl font-bold text-primary">Dashboard Overview</h1>
+        <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-1">
+          Real-time AML monitoring · {wsConnected ? "Live stream connected" : "Polling mode"}
+          <span className={`w-2 h-2 rounded-full ${wsConnected ? "bg-success animate-pulse-dot" : "bg-warning"}`} />
+        </p>
+        {error && <p className="text-xs text-danger mt-1">{error}</p>}
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+        {kpiCards.map((s) => (
+          <div
+            key={s.label}
+            className="bg-card border border-border rounded-[10px] p-4 shadow-none"
+            style={{ borderTop: `4px solid ${s.borderColor}` }}
           >
-            <div className="relative z-10">
-              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-[0.1em] mb-1">{kpi.label}</p>
-              <h3 className={cn("text-4xl font-extrabold tracking-tighter", kpi.color)}>{kpi.value}</h3>
-              <div className={cn("mt-4 flex items-center gap-2 text-[10px]", kpi.color === "text-error" ? "text-error/70" : "text-primary/70")}>
-                <kpi.subIcon className="w-3 h-3" />
-                <span>{kpi.sub}</span>
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">{s.label}</div>
+                <div className="text-foreground mt-1 text-2xl font-bold">{s.value}</div>
+                <div className="text-muted-foreground mt-1 text-xs">{s.sub}</div>
+              </div>
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: s.iconBg }}>
+                <s.icon className="w-[18px] h-[18px]" style={{ color: s.iconColor }} />
               </div>
             </div>
-            <kpi.icon className={cn("absolute -bottom-4 -right-4 w-24 h-24 opacity-5 group-hover:opacity-10 transition-opacity", kpi.color)} />
-          </motion.div>
+          </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-12 gap-8">
-        <div className="col-span-12 lg:col-span-8 space-y-4">
-          <div className="flex items-center justify-between px-2">
-            <h2 className="text-lg font-bold tracking-tight text-on-surface flex items-center gap-2">
-              <span className="w-1.5 h-6 bg-primary rounded-full"></span>
-              Real-Time Alert Feed
-            </h2>
-            <div className="flex gap-2">
-              <button onClick={() => navigate('/alerts')} className="px-3 py-1 text-[10px] font-bold bg-surface-container-highest text-on-surface-variant rounded-full uppercase tracking-widest hover:text-primary transition-colors">View All</button>
-            </div>
+      {/* Main Grid: Feed + Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
+        {/* Live Transaction Feed */}
+        <div className="lg:col-span-3 bg-card border border-border rounded-[10px] overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3.5 border-b border-border">
+            <span className="text-foreground font-semibold text-sm">Live Transaction Feed</span>
+            <span className="w-2 h-2 rounded-full bg-success animate-pulse-dot" />
+            <span className="bg-danger text-white text-[9px] font-bold px-2 py-0.5 rounded-full ml-1">LIVE</span>
           </div>
-          
-          <div className="bg-surface-container-low rounded-xl overflow-hidden border border-outline-variant/10 shadow-2xl">
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-surface-container">
-                <tr>
-                  <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-[0.2em]">Severity</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-[0.2em]">Alert ID</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-[0.2em]">Rule Flags</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-[0.2em]">Risk Score</th>
-                  <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-[0.2em]">Action</th>
+            <div className="max-h-[520px] overflow-y-auto scrollbar-thin">
+            <table className="w-full" style={{ borderCollapse: "collapse", tableLayout: "fixed" }}>
+              <thead>
+                <tr className="bg-table-header text-table-header-foreground text-[11px] font-semibold tracking-wide uppercase">
+                  <th className="text-left p-2.5 sticky top-0 z-10 bg-table-header" style={{ width: "14%" }}>TXN ID</th>
+                  <th className="text-left p-2.5 sticky top-0 z-10 bg-table-header" style={{ width: "12%" }}>From</th>
+                  <th className="text-left p-2.5 sticky top-0 z-10 bg-table-header" style={{ width: "12%" }}>To</th>
+                  <th className="text-right p-2.5 sticky top-0 z-10 bg-table-header" style={{ width: "14%" }}>Amount</th>
+                  <th className="text-left p-2.5 sticky top-0 z-10 bg-table-header" style={{ width: "10%" }}>Channel</th>
+                  <th className="text-left p-2.5 sticky top-0 z-10 bg-table-header" style={{ width: "18%" }}>Time</th>
+                  <th className="text-left p-2.5 sticky top-0 z-10 bg-table-header" style={{ width: "10%" }}>Status</th>
+                  <th className="text-center p-2.5 sticky top-0 z-10 bg-table-header" style={{ width: "10%" }}>Risk</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-outline-variant/5">
-                {criticalAlerts.map((alert) => (
-                  <tr key={alert.id} className="hover:bg-surface-container/50 transition-colors group">
-                    <td className="px-6 py-4">
-                      <span className={cn("inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase border", 
-                        alert.risk_level === "CRITICAL" ? "bg-tertiary-container text-on-tertiary-container" :
-                        alert.risk_level === "HIGH" ? "bg-orange-950/40 text-orange-400 border-orange-500/20" :
-                        "bg-yellow-950/40 text-yellow-400 border-yellow-500/20")}>
-                        {alert.risk_level}
-                      </span>
+              <tbody>
+                {!loading && transactions.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="p-4 text-center text-muted-foreground text-sm">
+                      No transactions available from backend yet.
                     </td>
-                    <td className="px-6 py-4 font-mono text-sm text-primary group-hover:underline cursor-pointer">{alert.id}</td>
-                    <td className="px-6 py-4 text-sm text-on-surface/80">{alert.rule_flags?.join(", ") || "N/A"}</td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
-                          <div className={cn("h-full", alert.risk_score > 80 ? "bg-error" : "bg-primary")} style={{ width: `${alert.risk_score}%` }}></div>
-                        </div>
-                        <span className={cn("text-xs font-bold", alert.risk_score > 80 ? "text-error" : "text-on-surface")}>{alert.risk_score}</span>
-                      </div>
+                  </tr>
+                )}
+                {transactions.map((t, i) => (
+                  <tr
+                    key={t.txnId + i}
+                    className={`border-b border-border/50 hover:bg-info/5 cursor-pointer ${newRowId === t.txnId ? "animate-flash-row" : ""}`}
+                    style={{ background: i % 2 === 1 ? "hsl(var(--table-stripe))" : undefined }}
+                    onClick={() => navigate("/transactions")}
+                  >
+                    <td className="p-2.5 text-[13px] font-mono font-medium text-primary truncate">{t.txnId}</td>
+                    <td className="p-2.5 text-[13px] font-mono text-foreground truncate">{t.source}</td>
+                    <td className="p-2.5 text-[13px] font-mono text-foreground truncate">{t.destination}</td>
+                    <td className="p-2.5 text-[13px] text-right font-semibold text-foreground">{t.amount}</td>
+                    <td className="p-2.5">
+                      <span className="bg-muted text-muted-foreground text-[10px] px-1.5 py-0.5 rounded">{t.channel}</span>
                     </td>
-                    <td className="px-6 py-4">
-                      <button onClick={() => navigate('/alerts')} className="p-2 text-primary hover:bg-primary/10 rounded-lg transition-colors">
-                        <Eye className="w-4 h-4" />
-                      </button>
+                    <td className="p-2.5 text-[12px] text-muted-foreground truncate">{t.timestamp}</td>
+                    <td className="p-2.5 text-[12px] font-medium" style={{
+                      color: t.status === "Flagged" ? "hsl(var(--danger))" : t.status === "Cleared" ? "hsl(var(--success))" : "hsl(var(--warning))",
+                      fontWeight: t.status === "Flagged" ? 600 : 400,
+                    }}>{t.status}</td>
+                    <td className="p-2.5">
+                      <RiskScoreBar score={t.riskScore} size="sm" />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <div className="px-6 py-4 bg-surface-container-low text-center">
-              <button onClick={() => navigate('/alerts')} className="text-[10px] font-black text-primary uppercase tracking-[0.2em] hover:tracking-[0.3em] transition-all">View All Activity</button>
-            </div>
           </div>
         </div>
 
-        <div className="col-span-12 lg:col-span-4 space-y-8">
-          <div className="space-y-4">
-            <h2 className="text-lg font-bold tracking-tight text-on-surface flex items-center gap-2">
-              <span className="w-1.5 h-6 bg-primary rounded-full"></span>
-              Quick Operations
-            </h2>
-            <div className="grid grid-cols-1 gap-4">
-              {[
-                { label: "View Alerts", sub: "Review fraud alerts", icon: AlertCircle, route: "/alerts" },
-                { label: "Generate STR", sub: "Create report", icon: FileText, route: "/str-reports" },
-                { label: "Graph Explorer", sub: "View networks", icon: Network, route: "/graph-explorer" },
-              ].map((op) => (
-                <button key={op.label} onClick={() => navigate(op.route)} className="group flex items-center justify-between p-4 bg-surface-container rounded-xl border border-outline-variant/5 hover:bg-surface-container-highest transition-all duration-300">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 bg-primary/10 text-primary rounded-xl group-hover:bg-primary group-hover:text-on-primary transition-colors">
-                      <op.icon className="w-5 h-5" />
+        {/* Charts Column */}
+        <div className="lg:col-span-2 flex flex-col gap-4">
+          {/* Fraud Bar Chart */}
+          <div className="bg-card border border-border rounded-[10px] p-5">
+            <div className="mb-3">
+              <div className="text-foreground font-semibold text-sm">Fraud Detections by Type</div>
+              <div className="text-muted-foreground text-xs mt-0.5">This week's breakdown</div>
+            </div>
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart layout="vertical" data={fraudBarData} margin={{ top: 4, right: 40, left: 8, bottom: 4 }}>
+                <CartesianGrid horizontal={false} stroke="hsl(var(--border))" />
+                <XAxis type="number" domain={[0, 16]} ticks={[0, 4, 8, 12, 16]} tick={{ fontSize: 11, fill: "hsl(215, 16%, 47%)" }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11, fill: "hsl(222, 47%, 11%)", fontWeight: 500 }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ background: "#fff", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }} />
+                <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={18} fill="hsl(var(--info))">
+                  <LabelList dataKey="count" position="right" style={{ fontSize: 11, fill: "hsl(222, 47%, 11%)", fontWeight: 600 }} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Alert Volume Line Chart */}
+          <div className="bg-card border border-border rounded-[10px] p-5">
+            <div className="mb-3">
+              <div className="text-foreground font-semibold text-sm">Alert Volume — Last 30 Days</div>
+              <div className="text-muted-foreground text-xs mt-0.5">Daily alert trend</div>
+            </div>
+            <ResponsiveContainer width="100%" height={180}>
+              <AreaChart data={alertVolumeData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
+                <XAxis dataKey="day" tick={{ fontSize: 10, fill: "hsl(215, 16%, 47%)" }} axisLine={false} tickLine={false} interval={3} />
+                <YAxis tick={{ fontSize: 10, fill: "hsl(215, 16%, 47%)" }} axisLine={false} tickLine={false} width={28} domain={[0, 60]} ticks={[0, 15, 30, 45, 60]} />
+                <Tooltip contentStyle={{ background: "#fff", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }} />
+                <defs>
+                  <linearGradient id="alertFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="hsl(var(--danger))" stopOpacity={0.15} />
+                    <stop offset="100%" stopColor="hsl(var(--danger))" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <Area type="monotone" dataKey="alerts" stroke="hsl(var(--danger))" strokeWidth={2} fill="url(#alertFill)" dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      {/* Recent High-Risk Alerts */}
+      <div className="bg-card border border-border rounded-[10px] overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
+          <span className="text-foreground font-semibold text-sm">Recent High-Risk Alerts</span>
+          <button onClick={() => navigate("/alerts")} className="text-xs text-primary hover:underline font-medium cursor-pointer">
+            View All →
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-table-header text-table-header-foreground text-[11px] font-semibold tracking-wide uppercase">
+                <th className="text-left p-3">Alert ID</th>
+                <th className="text-left p-3">Account</th>
+                <th className="text-left p-3">Fraud Type</th>
+                <th className="text-right p-3">Amount</th>
+                <th className="text-center p-3">Risk Score</th>
+                <th className="text-left p-3">Time</th>
+                <th className="text-right p-3">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!loading && recentAlerts.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="p-4 text-center text-muted-foreground text-sm">
+                    No alerts available yet.
+                  </td>
+                </tr>
+              )}
+              {recentAlerts.map((a, i) => (
+                <tr
+                  key={a.id}
+                  className="border-b last:border-0 hover:bg-info/5 cursor-pointer"
+                  style={{ background: i % 2 === 1 ? "hsl(var(--table-stripe))" : undefined }}
+                >
+                  <td className="p-3 font-mono font-semibold text-primary text-xs">{a.id}</td>
+                  <td className="p-3 font-mono text-xs">{a.account}</td>
+                  <td className="p-3 text-xs">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold" style={{
+                      color: fraudTypeColors[a.fraudType] || "hsl(var(--foreground))",
+                      background: `${fraudTypeColors[a.fraudType] || "hsl(var(--muted))"}15`,
+                    }}>
+                      {a.fraudType}
+                    </span>
+                  </td>
+                  <td className="p-3 text-xs text-right font-semibold">{a.amount}</td>
+                  <td className="p-3">
+                    <div className="flex justify-center">
+                      <RiskScoreBar score={a.riskScore} size="sm" />
                     </div>
-                    <div className="text-left">
-                      <p className="font-bold text-sm">{op.label}</p>
-                      <p className="text-[10px] text-on-surface-variant uppercase">{op.sub}</p>
-                    </div>
-                  </div>
-                  <ChevronRight className="w-5 h-5 text-primary group-hover:translate-x-1 transition-transform" />
-                </button>
+                  </td>
+                  <td className="p-3 text-xs text-muted-foreground">{a.timeDetected.split(" ")[1] || "-"}</td>
+                  <td className="p-3 text-right">
+                    <button
+                      className="text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded font-semibold hover:bg-primary/90 cursor-pointer inline-flex items-center gap-1"
+                      onClick={(e) => { e.stopPropagation(); navigate(`/graph?alert=${a.id}`); }}
+                    >
+                      Investigate <ArrowUpRight className="w-3 h-3" />
+                    </button>
+                  </td>
+                </tr>
               ))}
-            </div>
-          </div>
-
-          <div className="bg-surface-container p-6 rounded-xl border border-outline-variant/5 glass-gradient">
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Network Density</p>
-                <h4 className="text-xl font-bold">Threat Clusters</h4>
-              </div>
-              <span className="text-[10px] text-primary bg-primary/10 px-2 py-0.5 rounded uppercase font-bold tracking-tighter">Live Scan</span>
-            </div>
-            <div className="h-32 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData}>
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#122031', border: 'none', borderRadius: '8px', fontSize: '10px' }}
-                    cursor={{ fill: 'transparent' }}
-                  />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                    {chartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color.replace('66', 'ff').replace('33', '88')} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="mt-6 flex justify-between text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
-              {chartData.map(d => <span key={d.name}>{d.name}</span>)}
-            </div>
-          </div>
+            </tbody>
+          </table>
         </div>
       </div>
-
-      <div className="col-span-12">
-        <div className="bg-surface-container-low rounded-2xl p-8 relative overflow-hidden border border-outline-variant/10 min-h-[400px] flex items-center justify-center">
-          <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, #00D9FF 1px, transparent 0)', backgroundSize: '40px 40px' }}></div>
-          <div className="relative text-center max-w-lg z-10">
-            <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-primary/20">
-              <Network className="w-10 h-10 text-primary animate-pulse" />
-            </div>
-            <h3 className="text-2xl font-bold tracking-tight mb-2">Graph Intelligence Engine</h3>
-            <p className="text-on-surface-variant text-sm mb-8 leading-relaxed">
-              The UniGRAPH system is currently processing {health?.graph_stats?.accounts || 0} account nodes and {health?.graph_stats?.transactions || 0} transactions. Switch to the Graph Explorer to visualize multi-hop money laundering paths.
-            </p>
-            <button onClick={() => navigate('/graph-explorer')} className="bg-surface-container-highest border border-primary/30 text-primary px-8 py-3 rounded-xl font-bold text-xs uppercase tracking-[0.2em] hover:bg-primary hover:text-on-primary transition-all">Launch Graph Explorer</button>
-          </div>
-        </div>
-      </div>
-
-      <footer className="mt-auto border-t border-outline-variant/10 py-4 px-8 flex justify-between items-center text-[10px] text-on-surface-variant font-medium tracking-widest uppercase">
-        <div className="flex gap-8">
-          <p>Database: <span className="text-primary">Connected</span></p>
-          <p>Accounts: <span className="text-primary">{health?.graph_stats?.accounts || 0}</span></p>
-          <p>Transactions: <span className="text-primary">{health?.graph_stats?.transactions || 0}</span></p>
-        </div>
-        <div className="flex gap-4">
-          <span className="opacity-50">UniGRAPH v1.0.0</span>
-          <span className="opacity-50">© 2024 Union Bank of India</span>
-        </div>
-      </footer>
     </div>
   );
 }

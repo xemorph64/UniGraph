@@ -1,0 +1,61 @@
+name: Staging Live Provider Smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  provider-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install smoke dependencies
+        run: pip install httpx
+
+      - name: Validate required provider secrets
+        env:
+          FINACLE_API_URL: ${{ secrets.FINACLE_API_URL }}
+          FINACLE_CLIENT_ID: ${{ secrets.FINACLE_CLIENT_ID }}
+          FINACLE_CLIENT_SECRET: ${{ secrets.FINACLE_CLIENT_SECRET }}
+          FIU_IND_API_URL: ${{ secrets.FIU_IND_API_URL }}
+          FIU_IND_MTLS_CERT_PATH: ${{ secrets.FIU_IND_MTLS_CERT_PATH }}
+          FIU_IND_MTLS_KEY_PATH: ${{ secrets.FIU_IND_MTLS_KEY_PATH }}
+          NCRP_API_URL: ${{ secrets.NCRP_API_URL }}
+          NCRP_API_KEY: ${{ secrets.NCRP_API_KEY }}
+        run: |
+          test -n "$FINACLE_API_URL"
+          test -n "$FINACLE_CLIENT_ID"
+          test -n "$FINACLE_CLIENT_SECRET"
+          test -n "$FIU_IND_API_URL"
+          test -n "$FIU_IND_MTLS_CERT_PATH"
+          test -n "$FIU_IND_MTLS_KEY_PATH"
+          test -n "$NCRP_API_URL"
+          test -n "$NCRP_API_KEY"
+
+      - name: Materialize FIU mTLS files
+        env:
+          FIU_IND_MTLS_CERT_B64: ${{ secrets.FIU_IND_MTLS_CERT_B64 }}
+          FIU_IND_MTLS_KEY_B64: ${{ secrets.FIU_IND_MTLS_KEY_B64 }}
+        run: |
+          test -n "$FIU_IND_MTLS_CERT_B64"
+          test -n "$FIU_IND_MTLS_KEY_B64"
+          echo "$FIU_IND_MTLS_CERT_B64" | base64 -d > /tmp/fiu-cert.pem
+          echo "$FIU_IND_MTLS_KEY_B64" | base64 -d > /tmp/fiu-key.pem
+
+      - name: Run provider smoke checks
+        env:
+          FINACLE_API_URL: ${{ secrets.FINACLE_API_URL }}
+          FINACLE_CLIENT_ID: ${{ secrets.FINACLE_CLIENT_ID }}
+          FINACLE_CLIENT_SECRET: ${{ secrets.FINACLE_CLIENT_SECRET }}
+          FIU_IND_API_URL: ${{ secrets.FIU_IND_API_URL }}
+          FIU_IND_MTLS_CERT_PATH: /tmp/fiu-cert.pem
+          FIU_IND_MTLS_KEY_PATH: /tmp/fiu-key.pem
+          FIU_REFERENCE_ID: ${{ secrets.FIU_REFERENCE_ID }}
+          NCRP_API_URL: ${{ secrets.NCRP_API_URL }}
+          NCRP_API_KEY: ${{ secrets.NCRP_API_KEY }}
+          NCRP_HEALTH_URL: ${{ secrets.NCRP_HEALTH_URL }}
+        run: python scripts/provider_live_smoke.py --timeout 20

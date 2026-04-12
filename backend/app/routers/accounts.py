@@ -1,8 +1,9 @@
 from typing import Optional
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
 from ..services.neo4j_service import neo4j_service
+from ..services.timeline_service import timeline_service
 
 router = APIRouter()
 
@@ -43,10 +44,10 @@ async def get_account_profile(account_id: str):
         record = await result.single()
         if record:
             return dict(record["a"])
-        return {"error": "Account not found"}
+        raise HTTPException(status_code=404, detail="Account not found")
 
 
 @router.get("/{account_id}/timeline")
 async def get_account_timeline(account_id: str, days: int = Query(30, ge=1, le=365)):
     """Get historical risk score timeline from Cassandra."""
-    return {"account_id": account_id, "days": days, "timeline": []}
+    return await timeline_service.get_account_timeline(account_id=account_id, days=days)

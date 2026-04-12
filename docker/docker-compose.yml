@@ -30,8 +30,8 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
-      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     ports:
       - "9092:9092"
@@ -61,8 +61,8 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
-      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     ports:
       - "9093:9093"
@@ -92,8 +92,8 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
-      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     ports:
       - "9094:9094"
@@ -132,8 +132,30 @@ services:
     networks:
       - unigraph-network
 
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-init
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka-1:9092
+    volumes:
+      - ./init-scripts:/init-scripts:ro
+    command: ["/bin/bash", "/init-scripts/kafka-topics.sh"]
+    restart: "no"
+    networks:
+      - unigraph-network
+
   postgres:
-    image: postgres:16
+    build:
+      context: .
+      dockerfile: postgres/Dockerfile
+    image: unigraph-postgres:16
     container_name: postgres
     command:
       - postgres
@@ -151,7 +173,6 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-scripts/postgres-init.sql:/docker-entrypoint-initdb.d/01-postgres-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d finacle_cbs"]
       interval: 10s
@@ -164,6 +185,8 @@ services:
     image: debezium/connect:2.5
     container_name: debezium-connect
     depends_on:
+      kafka-init:
+        condition: service_completed_successfully
       kafka-1:
         condition: service_healthy
       schema-registry:
@@ -183,6 +206,41 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8083/connectors"]
       interval: 15s
+      timeout: 10s
+      retries: 10
+    networks:
+      - unigraph-network
+
+  debezium-init:
+    image: curlimages/curl:8.7.1
+    container_name: debezium-init
+    depends_on:
+      debezium-connect:
+        condition: service_healthy
+    volumes:
+      - ./init-scripts/register-debezium-connector.sh:/init/register-debezium-connector.sh:ro
+      - ../ingestion/debezium/connector-config.json:/config/connector-config.json:ro
+    environment:
+      DEBEZIUM_CONNECT_URL: http://debezium-connect:8083
+      CONNECTOR_CONFIG_PATH: /config/connector-config.json
+    command: ["/bin/sh", "/init/register-debezium-connector.sh"]
+    restart: "no"
+    networks:
+      - unigraph-network
+
+  ml-service:
+    build:
+      context: ..
+      dockerfile: ml/serving/Dockerfile
+    image: unigraph-ml-service:latest
+    container_name: ml-service
+    environment:
+      MODEL_DIR: /models
+    ports:
+      - "8002:8002"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/api/v1/ml/health')\""]
+      interval: 20s
       timeout: 10s
       retries: 10
     networks:

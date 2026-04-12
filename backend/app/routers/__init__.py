@@ -1,4 +1,14 @@
-from . import transactions, accounts, alerts, cases, reports, ws, fraud_scoring, enforcement
+from . import (
+    transactions,
+    accounts,
+    alerts,
+    cases,
+    reports,
+    ws,
+    fraud_scoring,
+    enforcement,
+    graph_analytics,
+)
 
 __all__ = [
     "transactions",
@@ -9,4 +19,5 @@ __all__ = [
     "ws",
     "fraud_scoring",
     "enforcement",
+    "graph_analytics",
 ]

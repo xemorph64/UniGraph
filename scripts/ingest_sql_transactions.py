@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Script to ingest transactions from transactions_inserts.sql"""
+"""Script to ingest transactions from transactions_inserts.sql."""
 
 import re
 import httpx
 import asyncio
 from pathlib import Path
 
-SQL_FILE = Path("/home/ojasbhalerao/Documents/Uni/transactions_inserts.sql")
+SQL_FILE = Path(__file__).resolve().parents[1] / "transactions_inserts.sql"
 API_URL = "http://localhost:8000/api/v1/transactions/ingest"
 
 CHANNEL_MAP = {
@@ -180,6 +180,10 @@ CHANNEL_MAP = {
 }
 
 
+def _to_bool(value: str) -> bool:
+    return value.strip().lower() in {"true", "1", "yes", "y", "t"}
+
+
 def parse_sql_inserts(content: str):
     pattern = r"INSERT INTO transactions VALUES \((.*?)\);"
     matches = re.findall(pattern, content, re.DOTALL)
@@ -187,15 +191,29 @@ def parse_sql_inserts(content: str):
     txns = []
     for match in matches:
         parts = [p.strip().strip("'").strip('"') for p in match.split(",")]
-        if len(parts) >= 12:
+        if len(parts) >= 24:
             txn_id = parts[0]
-            channel_code = parts[5]
+            customer_id = parts[5]
             from_acc = parts[3]
             to_acc = parts[4]
             amount = float(parts[6])
             channel = parts[8]
+            description = parts[12] or "Payment"
 
-            mapped_channel = CHANNEL_MAP.get(channel_code, channel)
+            # SQL dataset carries prior labels/scores that can be used as a risk hint
+            # when replaying historical data through the demo scorer.
+            risk_score = float(parts[18]) if parts[18] else 0.0
+            ml_score = float(parts[19]) if parts[19] else 0.0
+            is_flagged = _to_bool(parts[20])
+            is_fraud = _to_bool(parts[22])
+            hinted_high_risk = is_flagged or is_fraud or risk_score >= 70 or ml_score >= 70
+
+            velocity_1h = 5 if hinted_high_risk else (3 if risk_score >= 50 else 0)
+            velocity_24h = 10 if hinted_high_risk else (5 if risk_score >= 50 else 0)
+            device_account_count = 4 if hinted_high_risk else 1
+            is_dormant = bool(hinted_high_risk and amount >= 200000 and channel in {"RTGS", "SWIFT"})
+
+            mapped_channel = CHANNEL_MAP.get(customer_id, channel)
 
             txns.append(
                 {
@@ -204,6 +222,12 @@ def parse_sql_inserts(content: str):
                     "to_account": to_acc,
                     "amount": amount,
                     "channel": mapped_channel,
+                    "customer_id": customer_id,
+                    "description": description,
+                    "velocity_1h": velocity_1h,
+                    "velocity_24h": velocity_24h,
+                    "device_account_count": device_account_count,
+                    "is_dormant": is_dormant,
                 }
             )
 
@@ -253,4 +277,13 @@ async def main():
 
 
 if __name__ == "__main__":
+    import sys
+
+    if "--allow-legacy" not in sys.argv:
+        print(
+            "Legacy ingestor disabled in real-data mode. "
+            "Use scripts/ingest_fraud_scenarios.py instead, or pass --allow-legacy to override."
+        )
+        raise SystemExit(1)
+
     asyncio.run(main())

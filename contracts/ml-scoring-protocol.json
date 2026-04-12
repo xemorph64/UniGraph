@@ -1,36 +1,53 @@
 {
   "name": "ml-scoring-protocol",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "request": {
     "required": [
-      "txn_id",
-      "source_account",
-      "destination_account",
-      "amount",
-      "timestamp"
+      "enriched_transaction"
     ],
     "fields": {
-      "txn_id": "string",
-      "source_account": "string",
-      "destination_account": "string",
-      "amount": "double",
-      "timestamp": "datetime",
-      "graph_features": "object",
-      "rule_flags": "array<string>"
+      "enriched_transaction": {
+        "required": ["txn_id", "amount", "channel"],
+        "fields": {
+          "txn_id": "string",
+          "amount": "double",
+          "channel": "string",
+          "velocity_1h": "integer",
+          "velocity_24h": "integer",
+          "device_account_count": "integer",
+          "is_dormant": "boolean",
+          "rule_violations": "array<string>"
+        }
+      },
+      "graph_features": {
+        "required": [],
+        "fields": {
+          "connected_suspicious_nodes": "integer",
+          "community_risk_score": "double",
+          "community_id": "integer",
+          "pagerank": "double",
+          "betweenness_centrality": "double"
+        }
+      }
     }
   },
   "response": {
     "required": [
       "txn_id",
-      "risk_score",
-      "risk_level"
+      "gnn_fraud_probability",
+      "if_anomaly_score",
+      "xgboost_risk_score",
+      "model_version"
     ],
     "fields": {
       "txn_id": "string",
-      "risk_score": "double",
-      "risk_level": "string",
-      "ml_model_version": "string",
-      "shap_top3": "array<string>"
+      "gnn_fraud_probability": "double",
+      "if_anomaly_score": "double",
+      "xgboost_risk_score": "integer",
+      "shap_top3": "array<string>",
+      "model_version": "string",
+      "scoring_latency_ms": "double",
+      "timestamp": "datetime"
     }
   }
 }
