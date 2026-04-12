@@ -22,6 +22,7 @@ class TransactionResponse(BaseModel):
     risk_level: str
     recommendation: str
     rule_violations: list[str]
+    primary_fraud_type: Optional[str] = None
     is_flagged: bool
     alert_id: Optional[str] = None
 
@@ -87,6 +88,7 @@ async def ingest_transaction(txn: TransactionIngest):
     score_result = await fraud_scorer.score_transaction(txn_dict)
     txn_dict["risk_score"] = score_result["risk_score"]
     txn_dict["rule_violations"] = score_result["rule_violations"]
+    txn_dict["primary_fraud_type"] = score_result.get("primary_fraud_type")
     txn_dict["is_flagged"] = score_result["risk_score"] >= 60
 
     await neo4j_service.upsert_account(
@@ -111,6 +113,7 @@ async def ingest_transaction(txn: TransactionIngest):
                 "risk_level": score_result["risk_level"],
                 "shap_top3": score_result["shap_top3"],
                 "rule_flags": score_result["rule_violations"],
+                "primary_fraud_type": score_result.get("primary_fraud_type"),
                 "recommendation": score_result["recommendation"],
             }
         )
@@ -129,6 +132,7 @@ async def ingest_transaction(txn: TransactionIngest):
                     "risk_level": score_result["risk_level"],
                     "recommendation": score_result["recommendation"],
                     "rule_flags": score_result["rule_violations"],
+                    "primary_fraud_type": score_result.get("primary_fraud_type"),
                     "shap_top3": score_result["shap_top3"],
                     "status": "OPEN",
                     "created_at": created_at,
@@ -147,6 +151,7 @@ async def ingest_transaction(txn: TransactionIngest):
         risk_level=score_result["risk_level"],
         recommendation=score_result["recommendation"],
         rule_violations=score_result["rule_violations"],
+        primary_fraud_type=score_result.get("primary_fraud_type"),
         is_flagged=txn_dict["is_flagged"],
         alert_id=alert["id"] if alert else None,
     )

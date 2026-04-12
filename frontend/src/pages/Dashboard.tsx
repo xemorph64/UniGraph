@@ -21,10 +21,10 @@ import {
 const fraudTypeColors: Record<string, string> = {
   "Rapid Layering": "hsl(0, 72%, 51%)",
   "Round-Tripping": "hsl(263, 70%, 50%)",
-  "Structuring/Smurfing": "hsl(188, 86%, 40%)",
-  "Dormant Activation": "hsl(32, 95%, 44%)",
-  "Profile Mismatch": "hsl(160, 84%, 29%)",
-  "Mule Account": "hsl(var(--danger))",
+  Structuring: "hsl(188, 86%, 40%)",
+  "Dormant Account Awakening": "hsl(32, 95%, 44%)",
+  "Mule Account Network": "hsl(var(--danger))",
+  Anomaly: "hsl(160, 84%, 29%)",
 };
 
 export default function Dashboard() {

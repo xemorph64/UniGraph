@@ -10,6 +10,7 @@ export interface BackendTransaction {
   risk_score?: number;
   is_flagged?: boolean;
   rule_violations?: string[];
+  primary_fraud_type?: string;
 }
 
 export interface BackendAlert {
@@ -21,6 +22,7 @@ export interface BackendAlert {
   recommendation?: string;
   shap_top3?: string[];
   rule_flags?: string[];
+  primary_fraud_type?: string;
   status?: string;
   created_at?: string;
 }
@@ -111,6 +113,7 @@ export interface IngestTransactionResponse {
   risk_level: string;
   recommendation: string;
   rule_violations: string[];
+  primary_fraud_type?: string | null;
   is_flagged: boolean;
   alert_id?: string | null;
 }
@@ -253,9 +256,58 @@ function prettifyFlag(flag: string) {
     .join(" ");
 }
 
-export function deriveFraudType(flags: string[]) {
-  if (!flags.length) return "Anomaly";
-  return prettifyFlag(flags[0]);
+const FRAUD_TYPE_PRIORITY = [
+  "MULE_NETWORK",
+  "DORMANT_AWAKENING",
+  "RAPID_LAYERING",
+  "ROUND_TRIPPING",
+  "STRUCTURING",
+];
+
+const FRAUD_TYPE_LABELS: Record<string, string> = {
+  MULE_NETWORK: "Mule Account Network",
+  DORMANT_AWAKENING: "Dormant Account Awakening",
+  RAPID_LAYERING: "Rapid Layering",
+  ROUND_TRIPPING: "Round-Tripping",
+  STRUCTURING: "Structuring",
+};
+
+function normalizeRuleToken(value?: string) {
+  if (!value) return "";
+  return value
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+export function formatFraudType(value?: string) {
+  if (!value) return "Anomaly";
+  const token = normalizeRuleToken(value);
+  if (token && FRAUD_TYPE_LABELS[token]) {
+    return FRAUD_TYPE_LABELS[token];
+  }
+  return prettifyFlag(token || value);
+}
+
+export function deriveFraudType(flags: string[], primaryFraudType?: string) {
+  const primaryToken = normalizeRuleToken(primaryFraudType);
+  if (primaryToken) {
+    return formatFraudType(primaryToken);
+  }
+
+  const normalizedFlags = flags
+    .map((flag) => normalizeRuleToken(flag))
+    .filter((flag) => Boolean(flag));
+
+  if (!normalizedFlags.length) return "Anomaly";
+
+  for (const candidate of FRAUD_TYPE_PRIORITY) {
+    if (normalizedFlags.includes(candidate)) {
+      return formatFraudType(candidate);
+    }
+  }
+
+  return formatFraudType(normalizedFlags[0]);
 }
 
 export function toUiTransaction(txn: BackendTransaction): Transaction {
@@ -277,7 +329,7 @@ export function toUiTransaction(txn: BackendTransaction): Transaction {
 
 export function toAlertCard(alert: BackendAlert, txn?: BackendTransaction): AlertCardLike {
   const flags = (alert.rule_flags || []).map(prettifyFlag);
-  const type = deriveFraudType(alert.rule_flags || []);
+  const type = deriveFraudType(alert.rule_flags || [], alert.primary_fraud_type);
 
   return {
     id: alert.id,
@@ -390,7 +442,7 @@ export async function ingestTransaction(payload: IngestTransactionRequest) {
       amount: payload.amount,
       channel: payload.channel || "IMPS",
       customer_id: payload.customerId,
-      description: payload.description || "Simulation",
+      description: payload.description || "Pipeline ingest",
       device_id: payload.deviceId,
       is_dormant: payload.isDormant || false,
       device_account_count: payload.deviceAccountCount || 1,

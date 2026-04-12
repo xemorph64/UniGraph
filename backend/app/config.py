@@ -52,6 +52,7 @@ class Settings(BaseSettings):
 
     DEMO_MODE: bool = False
     DEMO_SEED_ON_STARTUP: bool = False
+    ALLOW_DEMO_DATA: bool = False
 
 
 settings = Settings()

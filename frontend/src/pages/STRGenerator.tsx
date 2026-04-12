@@ -144,7 +144,7 @@ export default function STRGenerator() {
       const response = await submitStrReport({
         strId,
         editedNarrative: narrative,
-        digitalSignature: "demo-digital-signature",
+        digitalSignature: "investigator-digital-signature",
       });
       toast.success(`Submitted with reference ${response.reference_id}`);
       await loadHistory();

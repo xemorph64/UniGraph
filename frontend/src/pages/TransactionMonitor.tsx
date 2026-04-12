@@ -11,12 +11,6 @@ const CHANNELS = ["All", "UPI", "NEFT", "RTGS", "IMPS", "CASH", "Card"];
 const STATUSES = ["All", "Flagged", "Cleared", "Pending"];
 const DATE_RANGES = ["Today", "This Week", "This Month"];
 
-const shapReasons: { feature: string; direction: "up" | "down"; value: number }[] = [
-  { feature: "Transaction velocity", direction: "up", value: 14.2 },
-  { feature: "Amount deviation", direction: "up", value: 11.8 },
-  { feature: "Account age", direction: "down", value: 5.3 },
-];
-
 export default function TransactionMonitor() {
   const navigate = useNavigate();
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
@@ -347,17 +341,21 @@ export default function TransactionMonitor() {
                 <div className="bg-muted/50 rounded-lg p-3">
                   <div className="flex items-center gap-1 mb-2">
                     <Info className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-xs font-semibold">Why flagged (SHAP)</span>
+                    <span className="text-xs font-semibold">Detection Reasons (Backend)</span>
                   </div>
                   <div className="space-y-1.5">
-                    {shapReasons.map(s => (
-                      <div key={s.feature} className="flex items-center justify-between text-[11px]">
-                        <span className="text-foreground">{s.feature}</span>
-                        <span className={s.direction === "up" ? "text-danger font-semibold" : "text-success font-semibold"}>
-                          {s.direction === "up" ? "↑" : "↓"} {s.direction === "up" ? "+" : "-"}{s.value} pts
-                        </span>
+                    {selected.flags.length === 0 ? (
+                      <div className="text-[11px] text-muted-foreground">
+                        No explicit rule flags were returned by backend for this transaction.
                       </div>
-                    ))}
+                    ) : (
+                      selected.flags.map((flag) => (
+                        <div key={flag} className="flex items-center justify-between text-[11px]">
+                          <span className="text-foreground">{flag}</span>
+                          <span className="text-danger font-semibold">Rule Matched</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
 

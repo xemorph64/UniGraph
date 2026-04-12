@@ -277,4 +277,13 @@ async def main():
 
 
 if __name__ == "__main__":
+    import sys
+
+    if "--allow-legacy" not in sys.argv:
+        print(
+            "Legacy ingestor disabled in real-data mode. "
+            "Use scripts/ingest_fraud_scenarios.py instead, or pass --allow-legacy to override."
+        )
+        raise SystemExit(1)
+
     asyncio.run(main())

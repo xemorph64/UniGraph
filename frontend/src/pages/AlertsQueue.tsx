@@ -78,15 +78,23 @@ const statusColors: Record<StatusType, string> = {
 const fraudTypeColors: Record<string, string> = {
   "Rapid Layering": "hsl(0, 72%, 51%)",
   "Round-Tripping": "hsl(263, 70%, 50%)",
-  "Structuring/Smurfing": "hsl(188, 86%, 40%)",
-  "Dormant Activation": "hsl(32, 95%, 44%)",
-  "Profile Mismatch": "hsl(160, 84%, 29%)",
-  "Mule Account": "hsl(var(--danger))",
+  Structuring: "hsl(188, 86%, 40%)",
+  "Dormant Account Awakening": "hsl(32, 95%, 44%)",
+  "Mule Account Network": "hsl(var(--danger))",
+  Anomaly: "hsl(160, 84%, 29%)",
 };
 
 type TabKey = "all" | "CRITICAL" | "HIGH" | "MEDIUM";
 
-const fraudTypes = ["All Types", "Rapid Layering", "Round-Tripping", "Structuring/Smurfing", "Dormant Activation", "Profile Mismatch", "Mule Account"];
+const fraudTypes = [
+  "All Types",
+  "Rapid Layering",
+  "Round-Tripping",
+  "Structuring",
+  "Dormant Account Awakening",
+  "Mule Account Network",
+  "Anomaly",
+];
 
 export default function AlertsQueue() {
   const navigate = useNavigate();

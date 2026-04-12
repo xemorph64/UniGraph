@@ -1,0 +1,631 @@
+{
+  "generated_at": "2026-04-12T07:03:56.840159Z",
+  "sql_file": "/home/ojasbhalerao/Documents/Uni/fraud_scenarios.sql",
+  "ingest_endpoint": "http://localhost:8000/api/v1/transactions/ingest",
+  "totals": {
+    "transactions_parsed": 25,
+    "ingest_success": 25,
+    "ingest_errors": 0,
+    "alerts_created_during_ingest": 11,
+    "alerts_visible_in_backend_list": 81,
+    "scenario_validation_pass": 5,
+    "scenario_validation_total": 5
+  },
+  "scenario_validation": [
+    {
+      "txn_id": "TXN-RT-003",
+      "expected_typology": "Round-Tripping",
+      "expected_rule": "ROUND_TRIPPING",
+      "detected": true,
+      "alert_id": "ALT-A80AE063",
+      "risk_score": 60.0,
+      "actual_rules": [
+        "ROUND_TRIPPING"
+      ],
+      "actual_primary_type": "ROUND_TRIPPING",
+      "primary_type_match": true,
+      "rule_match": true,
+      "pass": true
+    },
+    {
+      "txn_id": "TXN-ST-007",
+      "expected_typology": "Structuring",
+      "expected_rule": "STRUCTURING",
+      "detected": true,
+      "alert_id": "ALT-C40E9F90",
+      "risk_score": 60.0,
+      "actual_rules": [
+        "STRUCTURING"
+      ],
+      "actual_primary_type": "STRUCTURING",
+      "primary_type_match": true,
+      "rule_match": true,
+      "pass": true
+    },
+    {
+      "txn_id": "TXN-DA-001",
+      "expected_typology": "Dormant Account Awakening",
+      "expected_rule": "DORMANT_AWAKENING",
+      "detected": true,
+      "alert_id": "ALT-28F71A2D",
+      "risk_score": 65.0,
+      "actual_rules": [
+        "DORMANT_AWAKENING"
+      ],
+      "actual_primary_type": "DORMANT_AWAKENING",
+      "primary_type_match": true,
+      "rule_match": true,
+      "pass": true
+    },
+    {
+      "txn_id": "TXN-LA-005",
+      "expected_typology": "Rapid Layering",
+      "expected_rule": "RAPID_LAYERING",
+      "detected": true,
+      "alert_id": "ALT-01BA2DE1",
+      "risk_score": 100.0,
+      "actual_rules": [
+        "RAPID_LAYERING",
+        "ROUND_TRIPPING"
+      ],
+      "actual_primary_type": "RAPID_LAYERING",
+      "primary_type_match": true,
+      "rule_match": true,
+      "pass": true
+    },
+    {
+      "txn_id": "TXN-MU-OUT-003",
+      "expected_typology": "Mule Account Network",
+      "expected_rule": "MULE_NETWORK",
+      "detected": true,
+      "alert_id": "ALT-4D2B2275",
+      "risk_score": 65.0,
+      "actual_rules": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "actual_primary_type": "MULE_NETWORK",
+      "primary_type_match": true,
+      "rule_match": true,
+      "pass": true
+    }
+  ],
+  "ingest_results": [
+    {
+      "txn_id": "TXN-ST-001",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-ST-001",
+        "from_account": "ACC-ST-SND-001",
+        "to_account": "ACC-ST-RECV-001",
+        "amount": 49000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:54.885117Z",
+        "risk_score": 8.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [],
+        "primary_fraud_type": null,
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-ST-002",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-ST-002",
+        "from_account": "ACC-ST-SND-002",
+        "to_account": "ACC-ST-RECV-001",
+        "amount": 49000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:55.047458Z",
+        "risk_score": 13.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [],
+        "primary_fraud_type": null,
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-ST-003",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-ST-003",
+        "from_account": "ACC-ST-SND-003",
+        "to_account": "ACC-ST-RECV-001",
+        "amount": 49000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:55.109832Z",
+        "risk_score": 23.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [
+          "STRUCTURING"
+        ],
+        "primary_fraud_type": "STRUCTURING",
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-ST-004",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-ST-004",
+        "from_account": "ACC-ST-SND-004",
+        "to_account": "ACC-ST-RECV-001",
+        "amount": 49000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:55.210514Z",
+        "risk_score": 31.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [
+          "STRUCTURING"
+        ],
+        "primary_fraud_type": "STRUCTURING",
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-ST-005",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-ST-005",
+        "from_account": "ACC-ST-SND-005",
+        "to_account": "ACC-ST-RECV-001",
+        "amount": 49000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:55.264661Z",
+        "risk_score": 40.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [
+          "STRUCTURING"
+        ],
+        "primary_fraud_type": "STRUCTURING",
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-ST-006",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-ST-006",
+        "from_account": "ACC-ST-SND-006",
+        "to_account": "ACC-ST-RECV-001",
+        "amount": 49000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:55.323153Z",
+        "risk_score": 48.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [
+          "STRUCTURING"
+        ],
+        "primary_fraud_type": "STRUCTURING",
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-RT-001",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-RT-001",
+        "from_account": "ACC-RT-MUM-001",
+        "to_account": "ACC-RT-DEL-002",
+        "amount": 480000.0,
+        "channel": "RTGS",
+        "timestamp": "2026-04-12T07:03:55.374759Z",
+        "risk_score": 24.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [],
+        "primary_fraud_type": null,
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-LA-001",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-LA-001",
+        "from_account": "ACC-LA-001",
+        "to_account": "ACC-LA-002",
+        "amount": 800000.0,
+        "channel": "NEFT",
+        "timestamp": "2026-04-12T07:03:55.432803Z",
+        "risk_score": 38.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [
+          "STRUCTURING"
+        ],
+        "primary_fraud_type": "STRUCTURING",
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-LA-002",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-LA-002",
+        "from_account": "ACC-LA-002",
+        "to_account": "ACC-LA-003",
+        "amount": 795000.0,
+        "channel": "RTGS",
+        "timestamp": "2026-04-12T07:03:55.631539Z",
+        "risk_score": 60.0,
+        "risk_level": "MEDIUM",
+        "recommendation": "REVIEW",
+        "rule_violations": [
+          "RAPID_LAYERING"
+        ],
+        "primary_fraud_type": "RAPID_LAYERING",
+        "is_flagged": true,
+        "alert_id": "ALT-C18D8F8E"
+      }
+    },
+    {
+      "txn_id": "TXN-RT-002",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-RT-002",
+        "from_account": "ACC-RT-DEL-002",
+        "to_account": "ACC-RT-PUN-003",
+        "amount": 475000.0,
+        "channel": "NEFT",
+        "timestamp": "2026-04-12T07:03:55.714371Z",
+        "risk_score": 32.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [],
+        "primary_fraud_type": null,
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-ST-007",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-ST-007",
+        "from_account": "ACC-ST-SND-007",
+        "to_account": "ACC-ST-RECV-001",
+        "amount": 49000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:55.771290Z",
+        "risk_score": 60.0,
+        "risk_level": "MEDIUM",
+        "recommendation": "REVIEW",
+        "rule_violations": [
+          "STRUCTURING"
+        ],
+        "primary_fraud_type": "STRUCTURING",
+        "is_flagged": true,
+        "alert_id": "ALT-C40E9F90"
+      }
+    },
+    {
+      "txn_id": "TXN-LA-003",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-LA-003",
+        "from_account": "ACC-LA-003",
+        "to_account": "ACC-LA-004",
+        "amount": 790000.0,
+        "channel": "IMPS",
+        "timestamp": "2026-04-12T07:03:55.844420Z",
+        "risk_score": 60.0,
+        "risk_level": "MEDIUM",
+        "recommendation": "REVIEW",
+        "rule_violations": [
+          "RAPID_LAYERING"
+        ],
+        "primary_fraud_type": "RAPID_LAYERING",
+        "is_flagged": true,
+        "alert_id": "ALT-DCAD70EB"
+      }
+    },
+    {
+      "txn_id": "TXN-DA-001",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-DA-001",
+        "from_account": "ACC-DA-SRC-001",
+        "to_account": "ACC-DA-DORM-001",
+        "amount": 1200000.0,
+        "channel": "RTGS",
+        "timestamp": "2026-04-12T07:03:55.903119Z",
+        "risk_score": 65.0,
+        "risk_level": "MEDIUM",
+        "recommendation": "REVIEW",
+        "rule_violations": [
+          "DORMANT_AWAKENING"
+        ],
+        "primary_fraud_type": "DORMANT_AWAKENING",
+        "is_flagged": true,
+        "alert_id": "ALT-28F71A2D"
+      }
+    },
+    {
+      "txn_id": "TXN-LA-004",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-LA-004",
+        "from_account": "ACC-LA-004",
+        "to_account": "ACC-LA-005",
+        "amount": 785000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:55.963510Z",
+        "risk_score": 60.0,
+        "risk_level": "MEDIUM",
+        "recommendation": "REVIEW",
+        "rule_violations": [
+          "RAPID_LAYERING"
+        ],
+        "primary_fraud_type": "RAPID_LAYERING",
+        "is_flagged": true,
+        "alert_id": "ALT-328EF06C"
+      }
+    },
+    {
+      "txn_id": "TXN-RT-003",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-RT-003",
+        "from_account": "ACC-RT-PUN-003",
+        "to_account": "ACC-RT-MUM-001",
+        "amount": 470000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:56.024718Z",
+        "risk_score": 60.0,
+        "risk_level": "MEDIUM",
+        "recommendation": "REVIEW",
+        "rule_violations": [
+          "ROUND_TRIPPING"
+        ],
+        "primary_fraud_type": "ROUND_TRIPPING",
+        "is_flagged": true,
+        "alert_id": "ALT-A80AE063"
+      }
+    },
+    {
+      "txn_id": "TXN-LA-005",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-LA-005",
+        "from_account": "ACC-LA-005",
+        "to_account": "ACC-LA-001",
+        "amount": 780000.0,
+        "channel": "NEFT",
+        "timestamp": "2026-04-12T07:03:56.082447Z",
+        "risk_score": 100.0,
+        "risk_level": "CRITICAL",
+        "recommendation": "BLOCK",
+        "rule_violations": [
+          "RAPID_LAYERING",
+          "ROUND_TRIPPING"
+        ],
+        "primary_fraud_type": "RAPID_LAYERING",
+        "is_flagged": true,
+        "alert_id": "ALT-01BA2DE1"
+      }
+    },
+    {
+      "txn_id": "TXN-MU-IN-001",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-MU-IN-001",
+        "from_account": "ACC-MU-SND-001",
+        "to_account": "ACC-MU-HUB-001",
+        "amount": 200000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:56.203637Z",
+        "risk_score": 21.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [],
+        "primary_fraud_type": null,
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-MU-IN-002",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-MU-IN-002",
+        "from_account": "ACC-MU-SND-002",
+        "to_account": "ACC-MU-HUB-001",
+        "amount": 200000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:56.297927Z",
+        "risk_score": 21.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [],
+        "primary_fraud_type": null,
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-MU-IN-003",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-MU-IN-003",
+        "from_account": "ACC-MU-SND-003",
+        "to_account": "ACC-MU-HUB-001",
+        "amount": 200000.0,
+        "channel": "NEFT",
+        "timestamp": "2026-04-12T07:03:56.355083Z",
+        "risk_score": 18.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [],
+        "primary_fraud_type": null,
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-DA-002",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-DA-002",
+        "from_account": "ACC-DA-DORM-001",
+        "to_account": "ACC-DA-DST-001",
+        "amount": 1080000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:56.411421Z",
+        "risk_score": 65.0,
+        "risk_level": "MEDIUM",
+        "recommendation": "REVIEW",
+        "rule_violations": [
+          "DORMANT_AWAKENING"
+        ],
+        "primary_fraud_type": "DORMANT_AWAKENING",
+        "is_flagged": true,
+        "alert_id": "ALT-3626EA3D"
+      }
+    },
+    {
+      "txn_id": "TXN-MU-IN-004",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-MU-IN-004",
+        "from_account": "ACC-MU-SND-004",
+        "to_account": "ACC-MU-HUB-001",
+        "amount": 200000.0,
+        "channel": "IMPS",
+        "timestamp": "2026-04-12T07:03:56.468107Z",
+        "risk_score": 20.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [],
+        "primary_fraud_type": null,
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-MU-IN-005",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-MU-IN-005",
+        "from_account": "ACC-MU-SND-005",
+        "to_account": "ACC-MU-HUB-001",
+        "amount": 200000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:56.523957Z",
+        "risk_score": 28.0,
+        "risk_level": "LOW",
+        "recommendation": "ALLOW",
+        "rule_violations": [],
+        "primary_fraud_type": null,
+        "is_flagged": false,
+        "alert_id": null
+      }
+    },
+    {
+      "txn_id": "TXN-MU-OUT-001",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-MU-OUT-001",
+        "from_account": "ACC-MU-HUB-001",
+        "to_account": "ACC-MU-DST-001",
+        "amount": 300000.0,
+        "channel": "RTGS",
+        "timestamp": "2026-04-12T07:03:56.575324Z",
+        "risk_score": 65.0,
+        "risk_level": "MEDIUM",
+        "recommendation": "REVIEW",
+        "rule_violations": [
+          "RAPID_LAYERING",
+          "MULE_NETWORK"
+        ],
+        "primary_fraud_type": "MULE_NETWORK",
+        "is_flagged": true,
+        "alert_id": "ALT-DC96797B"
+      }
+    },
+    {
+      "txn_id": "TXN-MU-OUT-002",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-MU-OUT-002",
+        "from_account": "ACC-MU-HUB-001",
+        "to_account": "ACC-MU-DST-002",
+        "amount": 300000.0,
+        "channel": "NEFT",
+        "timestamp": "2026-04-12T07:03:56.685259Z",
+        "risk_score": 65.0,
+        "risk_level": "MEDIUM",
+        "recommendation": "REVIEW",
+        "rule_violations": [
+          "RAPID_LAYERING",
+          "MULE_NETWORK"
+        ],
+        "primary_fraud_type": "MULE_NETWORK",
+        "is_flagged": true,
+        "alert_id": "ALT-63C2849D"
+      }
+    },
+    {
+      "txn_id": "TXN-MU-OUT-003",
+      "ok": true,
+      "status_code": 200,
+      "response": {
+        "txn_id": "TXN-MU-OUT-003",
+        "from_account": "ACC-MU-HUB-001",
+        "to_account": "ACC-MU-DST-003",
+        "amount": 280000.0,
+        "channel": "UPI",
+        "timestamp": "2026-04-12T07:03:56.743360Z",
+        "risk_score": 65.0,
+        "risk_level": "MEDIUM",
+        "recommendation": "REVIEW",
+        "rule_violations": [
+          "RAPID_LAYERING",
+          "MULE_NETWORK"
+        ],
+        "primary_fraud_type": "MULE_NETWORK",
+        "is_flagged": true,
+        "alert_id": "ALT-4D2B2275"
+      }
+    }
+  ]
+}

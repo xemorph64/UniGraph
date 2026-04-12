@@ -113,7 +113,7 @@ export default function SettingsPage() {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settingsState));
     setTimeout(() => {
       setSaving(false);
-      toast.success("Settings saved locally (demo profile)");
+      toast.success("Settings saved locally");
     }, 350);
   };
 
@@ -164,7 +164,7 @@ export default function SettingsPage() {
         <div>
           <h1 className="text-xl font-bold text-primary">Settings & Profile</h1>
           <p className="text-xs text-muted-foreground mt-1">Live system status + local investigator preferences</p>
-          <p className="text-[11px] text-muted-foreground mt-1">Threshold and notification controls are local demo preferences until a settings API is added.</p>
+          <p className="text-[11px] text-muted-foreground mt-1">Threshold and notification controls are local preferences until a settings API is added.</p>
         </div>
         <button
           onClick={handleSave}

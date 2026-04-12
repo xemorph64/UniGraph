@@ -16,6 +16,7 @@ class AlertResponse(BaseModel):
     recommendation: str
     shap_top3: list[str]
     rule_flags: list[str]
+    primary_fraud_type: Optional[str] = None
     status: str
     created_at: Optional[str] = None
     assigned_to: Optional[str] = None

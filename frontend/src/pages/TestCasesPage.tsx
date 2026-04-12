@@ -1,169 +1,189 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { testCaseSections } from "@/data/test-cases";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Play, Eye } from "lucide-react";
-import { toast } from "sonner";
-import ForceGraph from "@/components/ForceGraph";
-import { ingestTransaction } from "@/lib/unigraph-api";
+import { Activity, AlertTriangle, Database, RefreshCw } from "lucide-react";
+import {
+  deriveFraudType,
+  getBackendHealth,
+  listAlerts,
+  listTransactions,
+  type BackendAlert,
+} from "@/lib/unigraph-api";
 
-function mapFraudTypeToGraph(fraudType: string): string {
-  const map: Record<string, string> = {
-    "Rapid Layering": "Rapid Layering",
-    "Round-Tripping": "Round-Tripping",
-    "Structuring": "Structuring",
-    "Dormant Activation": "Dormant Activation",
-    "Profile Mismatch": "Profile Mismatch",
-    "Mule Account": "Mule Account",
-  };
-  return map[fraudType] || "Rapid Layering";
+function formatWhen(value?: string): string {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function TestCasesPage() {
   const navigate = useNavigate();
-  const [previewCase, setPreviewCase] = useState<any>(null);
-  const [runningCaseId, setRunningCaseId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [backendStatus, setBackendStatus] = useState("unknown");
+  const [transactionCount, setTransactionCount] = useState(0);
+  const [alerts, setAlerts] = useState<BackendAlert[]>([]);
 
-  const parseAmount = (value: string): number => {
-    const numeric = Number(String(value).replace(/[^0-9.]/g, ""));
-    return Number.isFinite(numeric) ? numeric : 0;
-  };
-
-  const buildSimulationPayload = (testCase: any) => {
-    const amount = parseAmount(testCase.amount);
-    const base = {
-      txnId: `SIM-${testCase.id}-${Date.now()}`,
-      fromAccount: `SIM-${testCase.id}-SRC`,
-      toAccount: `SIM-${testCase.id}-DST`,
-      amount,
-      customerId: `SIM-CUST-${testCase.id}`,
-      deviceId: `SIM-DEV-${testCase.id}`,
-      description: `${testCase.fraudType} simulation ${testCase.id}`,
-      isDormant: false,
-      deviceAccountCount: 1,
-      velocity1h: 1,
-      velocity24h: 2,
-      channel: "IMPS",
-    };
-
-    if (testCase.fraudType === "Rapid Layering") {
-      return { ...base, channel: "UPI", velocity1h: 6, velocity24h: 14, deviceAccountCount: 4 };
-    }
-    if (testCase.fraudType === "Round-Tripping") {
-      return { ...base, channel: "IMPS", velocity1h: 5, velocity24h: 10, description: `${base.description} ROUND_TRIP` };
-    }
-    if (testCase.fraudType === "Structuring") {
-      return { ...base, channel: "CASH", amount: Math.min(amount, 980000), velocity1h: 4, velocity24h: 12 };
-    }
-    if (testCase.fraudType === "Dormant Activation") {
-      return { ...base, channel: "RTGS", isDormant: true, velocity1h: 3, velocity24h: 5 };
-    }
-    if (testCase.fraudType === "Profile Mismatch") {
-      return { ...base, channel: "NEFT", velocity1h: 4, velocity24h: 8, deviceAccountCount: 2 };
-    }
-    if (testCase.fraudType === "Mule Account") {
-      return { ...base, channel: "SWIFT", velocity1h: 5, velocity24h: 11, deviceAccountCount: 5 };
-    }
-
-    return base;
-  };
-
-  const runSimulation = async (testCase: any) => {
-    setRunningCaseId(testCase.id);
+  const loadData = useCallback(async () => {
     try {
-      const payload = buildSimulationPayload(testCase);
-      const response = await ingestTransaction(payload);
-      if (response.alert_id) {
-        toast.success(`${testCase.id} generated live alert ${response.alert_id}`);
-        navigate(`/graph?alert=${response.alert_id}`);
-      } else {
-        toast.info(`${testCase.id} ingested without alert (risk ${response.risk_score})`);
-        navigate("/transactions");
-      }
+      const [health, txnResp, alertResp] = await Promise.all([
+        getBackendHealth(),
+        listTransactions({ page: 1, pageSize: 1 }),
+        listAlerts({ page: 1, pageSize: 20 }),
+      ]);
+
+      setBackendStatus(health.status || "unknown");
+      setTransactionCount(txnResp.total || txnResp.items.length);
+      setAlerts(alertResp.items);
+      setError(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Simulation failed");
+      setError(err instanceof Error ? err.message : "Failed to load pipeline status");
     } finally {
-      setRunningCaseId(null);
+      setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void loadData();
+    const poller = setInterval(() => {
+      void loadData();
+    }, 15000);
+    return () => clearInterval(poller);
+  }, [loadData]);
+
+  const stats = useMemo(
+    () => [
+      {
+        label: "Dataset Source",
+        value: "fraud_scenarios.sql",
+        sub: "Real-data mode only",
+        icon: Database,
+        tone: "text-info",
+      },
+      {
+        label: "Transactions In Graph",
+        value: String(transactionCount),
+        sub: "From backend /transactions API",
+        icon: Activity,
+        tone: "text-primary",
+      },
+      {
+        label: "Active Alerts",
+        value: String(alerts.length),
+        sub: "From backend /alerts API",
+        icon: AlertTriangle,
+        tone: "text-danger",
+      },
+      {
+        label: "Backend Health",
+        value: backendStatus.toUpperCase(),
+        sub: "Live service status",
+        icon: RefreshCw,
+        tone: backendStatus === "healthy" ? "text-success" : "text-warning",
+      },
+    ],
+    [transactionCount, alerts.length, backendStatus],
+  );
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-foreground">Test Cases & Fraud Simulations</h1>
-      <p className="text-sm text-muted-foreground">30 built-in test cases across 6 fraud typologies. Run Simulation sends a real ingest request to backend.</p>
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-xl font-bold text-primary">Pipeline Status (Real Data Only)</h1>
+        <p className="text-xs text-muted-foreground mt-1">
+          This page shows live backend outputs sourced from fraud_scenarios ingestion.
+        </p>
+        {error && <p className="text-xs text-danger mt-1">{error}</p>}
+      </div>
 
-      {testCaseSections.map((section) => (
-        <div key={section.title} className="space-y-3">
-          <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
-            <span>{section.icon}</span> {section.title}
-            <Badge variant="outline" className="text-xs font-normal">{section.cases.length} cases</Badge>
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {section.cases.map((tc) => (
-              <Card key={tc.id} className="shadow-sm">
-                <CardHeader className="pb-2 pt-4 px-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[11px] font-bold text-primary">{tc.id}</span>
-                    <Badge className={`${tc.fraudColor} text-[10px]`}>{tc.fraudType}</Badge>
-                  </div>
-                  <CardTitle className="text-sm mt-1">{tc.name}</CardTitle>
-                </CardHeader>
-                <CardContent className="px-4 pb-4 space-y-2">
-                  <p className="text-[11px] text-muted-foreground line-clamp-3">{tc.description}</p>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Amount: <span className="font-bold text-foreground">{tc.amount}</span></span>
-                    <span className="text-muted-foreground">{tc.accountCount} accounts</span>
-                  </div>
-                  <div className="flex gap-2 pt-1">
-                    <Button
-                      size="sm"
-                      className="flex-1 text-xs h-8 bg-primary hover:bg-primary/90 text-primary-foreground"
-                      onClick={() => {
-                        void runSimulation(tc);
-                      }}
-                      disabled={runningCaseId === tc.id}
-                    >
-                      <Play className="mr-1 h-3 w-3" /> {runningCaseId === tc.id ? "Running..." : "Run Simulation"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="flex-1 text-xs h-8"
-                      onClick={() => setPreviewCase(tc)}
-                    >
-                      <Eye className="mr-1 h-3 w-3" /> View Expected
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      ))}
-
-      <Dialog open={!!previewCase} onOpenChange={() => setPreviewCase(null)}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          {previewCase && (
-            <>
-              <DialogHeader>
-                <DialogTitle>{previewCase.id}: {previewCase.name}</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3">
-                <Badge className={previewCase.fraudColor}>{previewCase.fraudType}</Badge>
-                <p className="text-sm text-muted-foreground">{previewCase.description}</p>
-                <div className="text-xs space-y-1">
-                  <div><strong>Amount:</strong> {previewCase.amount}</div>
-                  <div><strong>Accounts:</strong> {previewCase.accountCount}</div>
-                </div>
-                <ForceGraph fraudType={mapFraudTypeToGraph(previewCase.fraudType)} />
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        {stats.map((card) => (
+          <div key={card.label} className="bg-card border border-border rounded-[10px] p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[11px] text-muted-foreground uppercase tracking-wide font-semibold">{card.label}</div>
+                <div className={`text-lg font-bold mt-1 ${card.tone}`}>{card.value}</div>
+                <div className="text-[11px] text-muted-foreground mt-1">{card.sub}</div>
               </div>
-            </>
+              <card.icon className={`w-5 h-5 ${card.tone}`} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-card border border-border rounded-[10px] p-4">
+        <div className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">Actions</div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => navigate("/alerts")}
+            className="text-xs px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"
+          >
+            Open Alerts Queue
+          </button>
+          <button
+            onClick={() => navigate("/transactions")}
+            className="text-xs px-3 py-2 rounded-md border border-border bg-card text-foreground hover:bg-muted cursor-pointer"
+          >
+            Open Transaction Monitor
+          </button>
+          {alerts[0]?.id && (
+            <button
+              onClick={() => navigate(`/graph?alert=${encodeURIComponent(alerts[0].id)}`)}
+              className="text-xs px-3 py-2 rounded-md border border-border bg-card text-foreground hover:bg-muted cursor-pointer"
+            >
+              Open Latest Graph Investigation
+            </button>
           )}
-        </DialogContent>
-      </Dialog>
+        </div>
+      </div>
+
+      <div className="bg-card border border-border rounded-[10px] overflow-hidden">
+        <div className="px-4 py-3 border-b border-border text-sm font-semibold text-foreground">Latest Backend Alerts</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-table-header text-table-header-foreground uppercase tracking-wide text-[11px] font-semibold">
+                <th className="text-left p-2.5">Alert ID</th>
+                <th className="text-left p-2.5">Account</th>
+                <th className="text-left p-2.5">Fraud Type</th>
+                <th className="text-center p-2.5">Risk</th>
+                <th className="text-left p-2.5">Created</th>
+                <th className="text-right p-2.5">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!loading && alerts.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="p-4 text-center text-muted-foreground text-sm">
+                    No backend alerts available yet.
+                  </td>
+                </tr>
+              )}
+              {alerts.map((alert, idx) => (
+                <tr key={`${alert.id}-${idx}`} className="border-b last:border-0 hover:bg-info/5">
+                  <td className="p-2.5 font-mono text-primary font-semibold">{alert.id}</td>
+                  <td className="p-2.5 font-mono">{alert.account_id}</td>
+                  <td className="p-2.5">{deriveFraudType(alert.rule_flags || [], alert.primary_fraud_type)}</td>
+                  <td className="p-2.5 text-center font-semibold">{Math.round(alert.risk_score || 0)}</td>
+                  <td className="p-2.5 text-muted-foreground">{formatWhen(alert.created_at)}</td>
+                  <td className="p-2.5 text-right">
+                    <button
+                      onClick={() => navigate(`/graph?alert=${encodeURIComponent(alert.id)}`)}
+                      className="text-xs text-primary hover:underline cursor-pointer"
+                    >
+                      Investigate
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

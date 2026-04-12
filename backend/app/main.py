@@ -64,6 +64,7 @@ def _validate_non_demo_configuration() -> None:
 async def lifespan(app: FastAPI):
     logger.info("unigraph_starting", env=settings.APP_ENV)
     gds_scheduler_task: asyncio.Task | None = None
+    env_name = settings.APP_ENV.strip().lower()
     _validate_non_demo_configuration()
     try:
         await neo4j_service.connect()
@@ -82,7 +83,14 @@ async def lifespan(app: FastAPI):
         logger.error("neo4j_connection_failed", error=str(e))
         logger.warning("running_without_neo4j_demo_will_use_fallback")
 
-    if settings.DEMO_SEED_ON_STARTUP and settings.DEMO_MODE:
+    should_seed_demo = (
+        settings.ALLOW_DEMO_DATA
+        and settings.DEMO_MODE
+        and settings.DEMO_SEED_ON_STARTUP
+        and env_name == "demo"
+    )
+
+    if should_seed_demo:
         try:
             logger.info("seeding_demo_data")
             asyncio.create_task(_seed_demo_data_async())
@@ -202,7 +210,7 @@ async def health(response: Response):
 
 @app.get("/api/v1/demo/reset")
 async def reset_demo():
-    if not settings.DEMO_MODE:
+    if not settings.ALLOW_DEMO_DATA or not settings.DEMO_MODE:
         raise HTTPException(status_code=404, detail="Not found")
 
     try:

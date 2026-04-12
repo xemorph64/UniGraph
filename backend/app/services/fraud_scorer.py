@@ -44,6 +44,14 @@ FRAUD_TYPOLOGIES = {
     },
 }
 
+TYPOLOGY_PRIORITY = [
+    "MULE_NETWORK",
+    "DORMANT_AWAKENING",
+    "RAPID_LAYERING",
+    "ROUND_TRIPPING",
+    "STRUCTURING",
+]
+
 
 class FraudScorer:
     def __init__(self):
@@ -127,6 +135,7 @@ class FraudScorer:
         device_account_count = txn.get("device_account_count", 1)
         velocity_1h = txn.get("velocity_1h", 0)
         velocity_24h = txn.get("velocity_24h", 0)
+        round_trip_marker = "ROUND_TRIP" in description
 
         if amount > 500000:
             risk_score += 20
@@ -143,15 +152,35 @@ class FraudScorer:
             risk_score += 12
             shap_contributions.append(f"elevated_velocity_1h_{velocity_1h}: +12")
 
+        # High-value funds moving through accounts with bursty activity is a strong
+        # layering signal in live transaction streams.
+        if amount >= 500000 and velocity_1h >= 2 and not is_dormant:
+            risk_score += 40
+            if "RAPID_LAYERING" not in rule_violations:
+                rule_violations.append("RAPID_LAYERING")
+            shap_contributions.append(
+                f"high_value_multi_hop_velocity_1h_{velocity_1h}: +40"
+            )
+
         if 800000 <= amount <= 990000:
             risk_score += 22
             rule_violations.append("STRUCTURING")
             shap_contributions.append("amount_near_ctr_threshold: +22")
 
+        # Smurfing/structuring signal for repeated sub-threshold credits in a day.
+        if 40000 <= amount < 50000 and velocity_24h >= 3:
+            structuring_boost = min(65, 24 + max(0, velocity_24h - 3) * 9)
+            risk_score += structuring_boost
+            if "STRUCTURING" not in rule_violations:
+                rule_violations.append("STRUCTURING")
+            shap_contributions.append(
+                f"repeated_sub_threshold_transfers_{velocity_24h}_in_24h: +{structuring_boost}"
+            )
+
         if is_dormant:
-            risk_score += 35
+            risk_score += 45
             rule_violations.append("DORMANT_AWAKENING")
-            shap_contributions.append("dormant_account_activity: +35")
+            shap_contributions.append("dormant_account_activity: +45")
 
         if device_account_count > 3:
             risk_score += 30
@@ -165,13 +194,14 @@ class FraudScorer:
             shap_contributions.append(f"high_risk_channel_{channel}: +8")
 
         # Round-tripping indicator used in synthetic and replay tests.
-        if (from_account and to_account and from_account == to_account) or (
-            "ROUND_TRIP" in description
-        ):
-            risk_score += 28
+        if (from_account and to_account and from_account == to_account) or round_trip_marker:
+            risk_score += 35
             if "ROUND_TRIPPING" not in rule_violations:
                 rule_violations.append("ROUND_TRIPPING")
-            shap_contributions.append("round_tripping_pattern: +28")
+            shap_contributions.append("round_tripping_pattern: +35")
+            if amount >= 250000:
+                risk_score += 15
+                shap_contributions.append("high_value_round_trip: +15")
 
         if velocity_24h >= 10:
             risk_score += 15
@@ -206,6 +236,10 @@ class FraudScorer:
             ml_score = max(0, min(100, int(round(float(ml_result.get("xgboost_risk_score", 0))))))
             # Blend learned score with deterministic rule signals to preserve typology explainability.
             risk_score = min(100, round(ml_score * 0.8 + rule_based_score * 0.2))
+            # If deterministic rules already indicate an alert-worthy pattern,
+            # preserve that floor even when ML predicts lower risk.
+            if rule_violations and rule_based_score >= 60:
+                risk_score = max(risk_score, rule_based_score)
             gnn_fraud_probability = float(ml_result.get("gnn_fraud_probability", min(risk_score / 100, 1.0)))
             if_anomaly_score = float(ml_result.get("if_anomaly_score", min(risk_score / 120, 1.0)))
             xgboost_risk_score = ml_score
@@ -243,12 +277,15 @@ class FraudScorer:
             risk_level = "LOW"
             recommendation = "ALLOW"
 
+        primary_fraud_type = self._select_primary_fraud_type(rule_violations)
+
         result = {
             "txn_id": txn.get("txn_id", str(uuid.uuid4())),
             "risk_score": risk_score,
             "risk_level": risk_level,
             "recommendation": recommendation,
             "rule_violations": rule_violations,
+            "primary_fraud_type": primary_fraud_type,
             "shap_top3": shap_top3,
             "gnn_fraud_probability": gnn_fraud_probability,
             "if_anomaly_score": if_anomaly_score,
@@ -267,6 +304,19 @@ class FraudScorer:
         )
 
         return result
+
+    @staticmethod
+    def _select_primary_fraud_type(rule_violations: list[str]) -> Optional[str]:
+        if not rule_violations:
+            return None
+
+        unique_rules = set(rule_violations)
+        for typology in TYPOLOGY_PRIORITY:
+            if typology in unique_rules:
+                return typology
+
+        # Preserve backward compatibility for any unknown future rule names.
+        return rule_violations[0]
 
     async def should_create_alert(self, score_result: dict) -> bool:
         return score_result["risk_score"] >= 60

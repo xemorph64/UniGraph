@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Bell } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { connectAlertsWebSocket, listAlerts, listTransactions, type BackendAlert } from "@/lib/unigraph-api";
 
 const breadcrumbMap: Record<string, string> = {
   "/": "Dashboard Overview",
@@ -12,17 +13,40 @@ const breadcrumbMap: Record<string, string> = {
   "/copilot": "Investigator Copilot",
   "/transactions": "Transaction Monitor",
   "/str-generator": "STR Generator",
-  "/test-cases": "Test Cases",
+  "/pipeline-status": "Pipeline Status",
   "/settings": "Settings & Profile",
 };
 
-const recentNotifications = [
-  { id: 1, text: "ALT-2024-0847: Rapid Layering detected — ₹20L", time: "10:12 IST" },
-  { id: 2, text: "ALT-2024-0848: Round-Tripping flagged — ₹50L", time: "09:45 IST" },
-  { id: 3, text: "ALT-2024-0849: Structuring alert — ₹4.9L", time: "08:30 IST" },
-  { id: 4, text: "ALT-2024-0850: Dormant account activated — ₹1.5Cr", time: "07:00 IST" },
-  { id: 5, text: "STR-UBI-2024-0041 accepted by FIU-IND", time: "Yesterday" },
-];
+interface HeaderNotification {
+  alertId: string;
+  text: string;
+  time: string;
+}
+
+function prettifyFlag(flag: string): string {
+  return flag
+    .toLowerCase()
+    .split("_")
+    .map((chunk) => chunk.charAt(0).toUpperCase() + chunk.slice(1))
+    .join(" ");
+}
+
+function formatAlertTime(value?: string): string {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+}
+
+function toHeaderNotification(alert: BackendAlert): HeaderNotification {
+  const topFlag = alert.rule_flags?.[0] ? prettifyFlag(alert.rule_flags[0]) : "Anomaly";
+  const risk = Number.isFinite(alert.risk_score) ? `risk ${Math.round(alert.risk_score)}` : "risk -";
+  return {
+    alertId: alert.id,
+    text: `${alert.id}: ${topFlag} detected (${risk})`,
+    time: formatAlertTime(alert.created_at),
+  };
+}
 
 function AppContent() {
   const location = useLocation();
@@ -30,8 +54,49 @@ function AppContent() {
 
   const pageName = breadcrumbMap[location.pathname] || "Dashboard";
   const [notifOpen, setNotifOpen] = useState(false);
-  const [notifCount, setNotifCount] = useState(47);
+  const [transactionCount, setTransactionCount] = useState<number | null>(null);
+  const [alertCount, setAlertCount] = useState<number | null>(null);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [recentNotifications, setRecentNotifications] = useState<HeaderNotification[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const loadHeaderData = useCallback(async () => {
+    try {
+      const [txnResp, alertResp] = await Promise.all([
+        listTransactions({ page: 1, pageSize: 1 }),
+        listAlerts({ page: 1, pageSize: 5 }),
+      ]);
+      setTransactionCount(txnResp.total ?? txnResp.items.length);
+      setAlertCount(alertResp.total ?? alertResp.items.length);
+      setRecentNotifications(alertResp.items.map(toHeaderNotification));
+    } catch {
+      // Keep the current UI state when backend polling fails.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadHeaderData();
+    const poller = setInterval(() => {
+      void loadHeaderData();
+    }, 15000);
+    return () => clearInterval(poller);
+  }, [loadHeaderData]);
+
+  useEffect(() => {
+    const disconnect = connectAlertsWebSocket(
+      "layout-header-ui",
+      (incomingAlert) => {
+        setRecentNotifications((prev) => {
+          const next = [toHeaderNotification(incomingAlert), ...prev.filter((item) => item.alertId !== incomingAlert.id)];
+          return next.slice(0, 5);
+        });
+        setAlertCount((prev) => (prev ?? 0) + 1);
+      },
+      setWsConnected,
+    );
+
+    return disconnect;
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -61,9 +126,9 @@ function AppContent() {
         {/* CENTER — Live stat chips */}
         <div className="hidden md:flex items-center gap-2">
           {[
-            { dot: "bg-success", label: "System Online" },
-            { dot: "bg-warning", label: "8,64,320 txn today" },
-            { dot: "bg-danger", label: "47 Active Alerts" },
+            { dot: wsConnected ? "bg-success" : "bg-warning", label: wsConnected ? "Live stream connected" : "Polling mode" },
+            { dot: "bg-info", label: `${(transactionCount ?? 0).toLocaleString("en-IN")} transactions` },
+            { dot: "bg-danger", label: `${alertCount ?? 0} active alerts` },
           ].map((chip) => (
             <div key={chip.label} className="flex items-center gap-1.5 rounded-full px-3 py-1 bg-white/10 text-white text-[14px]">
               <span className={`inline-block w-2 h-2 rounded-full ${chip.dot}`} />
@@ -78,9 +143,9 @@ function AppContent() {
           <div className="relative" ref={dropdownRef}>
             <button onClick={() => setNotifOpen(!notifOpen)} className="relative cursor-pointer">
               <Bell className="h-5 w-5 text-navbar-foreground/80" />
-              {notifCount > 0 && (
+              {(alertCount ?? 0) > 0 && (
                 <span className="absolute -top-2 -right-2 flex items-center justify-center text-navbar-foreground bg-danger rounded-full px-1.5 text-[12px] font-bold min-w-[16px]">
-                  {notifCount}
+                  {alertCount}
                 </span>
               )}
             </button>
@@ -88,21 +153,28 @@ function AppContent() {
               <div className="absolute right-0 top-10 w-80 bg-card border border-border rounded-lg shadow-lg z-50">
                 <div className="flex items-center justify-between p-3 border-b">
                   <span className="text-sm font-semibold text-foreground">Notifications</span>
-                  <button onClick={() => setNotifCount(0)} className="text-xs text-primary hover:underline">
+                  <button onClick={() => setRecentNotifications([])} className="text-xs text-primary hover:underline">
                     Mark all read
                   </button>
                 </div>
                 <div className="max-h-64 overflow-y-auto">
-                  {recentNotifications.map((n) => (
-                    <div
-                      key={n.id}
-                      className="px-3 py-2 border-b last:border-0 hover:bg-muted/50 cursor-pointer"
-                      onClick={() => { setNotifOpen(false); navigate("/alerts"); }}
-                    >
-                      <p className="text-[13px] text-foreground">{n.text}</p>
-                      <p className="text-[13px] text-muted-foreground mt-0.5">{n.time}</p>
-                    </div>
-                  ))}
+                  {recentNotifications.length === 0 ? (
+                    <div className="px-3 py-3 text-xs text-muted-foreground">No recent backend alerts.</div>
+                  ) : (
+                    recentNotifications.map((n) => (
+                      <div
+                        key={n.alertId}
+                        className="px-3 py-2 border-b last:border-0 hover:bg-muted/50 cursor-pointer"
+                        onClick={() => {
+                          setNotifOpen(false);
+                          navigate(`/graph?alert=${encodeURIComponent(n.alertId)}`);
+                        }}
+                      >
+                        <p className="text-[13px] text-foreground">{n.text}</p>
+                        <p className="text-[13px] text-muted-foreground mt-0.5">{n.time}</p>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             )}

@@ -138,6 +138,7 @@ class Neo4jService:
                     t.risk_score = $risk_score,
                     t.is_flagged = $is_flagged,
                     t.rule_violations = $rule_violations,
+                    t.primary_fraud_type = $primary_fraud_type,
                     t.description = $description,
                     t.device_id = $device_id
                 ON MATCH SET
@@ -149,6 +150,7 @@ class Neo4jService:
                     t.risk_score = $risk_score,
                     t.is_flagged = $is_flagged,
                     t.rule_violations = $rule_violations,
+                    t.primary_fraud_type = $primary_fraud_type,
                     t.description = $description,
                     t.device_id = $device_id
                 RETURN t
@@ -162,6 +164,7 @@ class Neo4jService:
                 risk_score=txn.get("risk_score", 0.0),
                 is_flagged=txn.get("is_flagged", False),
                 rule_violations=txn.get("rule_violations", []),
+                primary_fraud_type=txn.get("primary_fraud_type"),
                 description=txn.get("description", ""),
                 device_id=txn.get("device_id", "unknown"),
             )
@@ -295,6 +298,7 @@ class Neo4jService:
                     risk_level: $risk_level,
                     shap_top3: $shap_top3,
                     rule_flags: $rule_flags,
+                    primary_fraud_type: $primary_fraud_type,
                     status: 'OPEN',
                     recommendation: $recommendation,
                     created_at: datetime(),
