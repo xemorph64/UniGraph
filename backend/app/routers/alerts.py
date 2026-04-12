@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from ..services.neo4j_service import neo4j_service
@@ -40,7 +40,7 @@ async def get_alert(alert_id: str):
     """Get single alert by ID."""
     alert = await neo4j_service.get_alert_by_id(alert_id)
     if not alert:
-        return {"error": "Alert not found"}
+        raise HTTPException(status_code=404, detail="Alert not found")
     return alert
 
 
@@ -65,7 +65,7 @@ async def investigate_alert(alert_id: str, hops: int = Query(2, ge=1, le=4)):
     """Get dynamic investigation payload with alert, graph and analyst note."""
     alert = await neo4j_service.get_alert_by_id(alert_id)
     if not alert:
-        return {"error": "Alert not found"}
+        raise HTTPException(status_code=404, detail="Alert not found")
 
     account_id = alert.get("account_id", "")
     transaction_id = alert.get("transaction_id", "")

@@ -1,38 +1,170 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { User, Shield, Bell, Server, Save } from "lucide-react";
+import { Bell, Save, Server, Shield, User } from "lucide-react";
 import { toast } from "sonner";
+import {
+  getBackendHealth,
+  getGraphAnalyticsStatus,
+  getMlHealth,
+  listAlerts,
+  type BackendHealthResponse,
+  type GraphAnalyticsStatusResponse,
+  type MlHealthResponse,
+} from "@/lib/unigraph-api";
+
+interface LocalSettings {
+  velocityThreshold: number[];
+  dormancyPeriod: number[];
+  structuringAmount: string;
+  muleAge: string;
+  minHops: number[];
+  modules: Record<string, boolean>;
+  notifications: Record<string, boolean>;
+}
+
+const SETTINGS_STORAGE_KEY = "unigraph-local-settings";
+
+const defaultLocalSettings: LocalSettings = {
+  velocityThreshold: [500],
+  dormancyPeriod: [12],
+  structuringAmount: "10,00,000",
+  muleAge: "45",
+  minHops: [3],
+  modules: {
+    layering: true,
+    roundTrip: true,
+    structuring: true,
+    dormant: true,
+    profile: true,
+    mule: true,
+  },
+  notifications: {
+    email: true,
+    sms: false,
+    inApp: true,
+    strReminder: true,
+  },
+};
+
+function safeLoadSettings(): LocalSettings {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return defaultLocalSettings;
+    const parsed = JSON.parse(raw) as LocalSettings;
+    return {
+      ...defaultLocalSettings,
+      ...parsed,
+      modules: { ...defaultLocalSettings.modules, ...(parsed.modules || {}) },
+      notifications: { ...defaultLocalSettings.notifications, ...(parsed.notifications || {}) },
+    };
+  } catch {
+    return defaultLocalSettings;
+  }
+}
+
+function liveStatusLabel(isHealthy: boolean, healthyLabel = "Online", unhealthyLabel = "Offline"): string {
+  return isHealthy ? healthyLabel : unhealthyLabel;
+}
 
 export default function SettingsPage() {
-  const [velocityThreshold, setVelocityThreshold] = useState([500]);
-  const [dormancyPeriod, setDormancyPeriod] = useState([12]);
-  const [structuringAmount, setStructuringAmount] = useState("10,00,000");
-  const [muleAge, setMuleAge] = useState("45");
-  const [minHops, setMinHops] = useState([3]);
+  const [settingsState, setSettingsState] = useState<LocalSettings>(defaultLocalSettings);
   const [saving, setSaving] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(true);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [backendHealth, setBackendHealth] = useState<BackendHealthResponse | null>(null);
+  const [graphStatus, setGraphStatus] = useState<GraphAnalyticsStatusResponse | null>(null);
+  const [mlHealth, setMlHealth] = useState<MlHealthResponse | null>(null);
+  const [alertCount, setAlertCount] = useState(0);
 
-  const [modules, setModules] = useState({
-    layering: true, roundTrip: true, structuring: true, dormant: true, profile: true, mule: true,
-  });
-  const [notifications, setNotifications] = useState({
-    email: true, sms: false, inApp: true, strReminder: true,
-  });
+  const refreshLiveStatus = useCallback(async () => {
+    setStatusLoading(true);
+    try {
+      const [backend, graph, ml, alerts] = await Promise.all([
+        getBackendHealth(),
+        getGraphAnalyticsStatus(),
+        getMlHealth(),
+        listAlerts({ page: 1, pageSize: 1 }),
+      ]);
+
+      setBackendHealth(backend);
+      setGraphStatus(graph);
+      setMlHealth(ml);
+      setAlertCount(alerts.total || alerts.items.length);
+      setStatusError(null);
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : "Unable to fetch live status");
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setSettingsState(safeLoadSettings());
+    void refreshLiveStatus();
+    const poller = setInterval(() => {
+      void refreshLiveStatus();
+    }, 20000);
+    return () => clearInterval(poller);
+  }, [refreshLiveStatus]);
 
   const handleSave = () => {
     setSaving(true);
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settingsState));
     setTimeout(() => {
       setSaving(false);
-      toast.success("Settings saved successfully");
-    }, 1500);
+      toast.success("Settings saved locally (demo profile)");
+    }, 350);
   };
+
+  const systemCards = useMemo(() => {
+    const neo4jOnline = backendHealth?.neo4j === "connected";
+    const mlOnline = mlHealth?.status === "healthy";
+    const gdsReady = graphStatus?.status === "ok";
+    const totalAccounts = graphStatus?.gds?.total_accounts || 0;
+    const analyzedAccounts = graphStatus?.gds?.with_pagerank || 0;
+
+    return [
+      {
+        name: "Backend API",
+        status: liveStatusLabel(backendHealth?.status === "healthy"),
+        detail: backendHealth ? `version ${backendHealth.version}` : "No data",
+        ok: backendHealth?.status === "healthy",
+      },
+      {
+        name: "Neo4j Graph DB",
+        status: liveStatusLabel(neo4jOnline),
+        detail: neo4jOnline ? `${backendHealth?.graph_stats?.total_accounts || 0} accounts` : "Disconnected",
+        ok: neo4jOnline,
+      },
+      {
+        name: "Graph Analytics",
+        status: liveStatusLabel(gdsReady, "Ready", "Unavailable"),
+        detail: gdsReady ? `${analyzedAccounts}/${totalAccounts} with PageRank` : "No analytics status",
+        ok: gdsReady,
+      },
+      {
+        name: "ML Engine",
+        status: liveStatusLabel(mlOnline, "Running", "Unavailable"),
+        detail: mlOnline ? mlHealth?.model_version || "healthy" : "No response on ML health",
+        ok: mlOnline,
+      },
+      {
+        name: "Alert Stream",
+        status: liveStatusLabel(alertCount > 0, "Active", "Idle"),
+        detail: `${alertCount} current alerts`,
+        ok: true,
+      },
+    ];
+  }, [backendHealth, graphStatus, mlHealth, alertCount]);
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-primary">Settings & Profile</h1>
-          <p className="text-xs text-muted-foreground mt-1">Configure detection thresholds and notification preferences</p>
+          <p className="text-xs text-muted-foreground mt-1">Live system status + local investigator preferences</p>
+          <p className="text-[11px] text-muted-foreground mt-1">Threshold and notification controls are local demo preferences until a settings API is added.</p>
         </div>
         <button
           onClick={handleSave}
@@ -43,8 +175,9 @@ export default function SettingsPage() {
         </button>
       </div>
 
+      {statusError && <p className="text-xs text-danger">{statusError}</p>}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* User Profile */}
         <div className="bg-card border border-border rounded-[10px] p-5">
           <div className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-2 mb-4">
             <User className="w-4 h-4" /> User Profile
@@ -74,38 +207,36 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Alert Thresholds */}
         <div className="bg-card border border-border rounded-[10px] p-5">
           <div className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-2 mb-4">
-            <Shield className="w-4 h-4" /> Alert Thresholds
+            <Shield className="w-4 h-4" /> Alert Thresholds (Local)
           </div>
           <div className="space-y-4">
             <div>
-              <div className="flex justify-between text-xs mb-1"><span className="text-muted-foreground">Velocity Threshold</span><span className="font-bold">{velocityThreshold[0]}%</span></div>
-              <Slider value={velocityThreshold} onValueChange={setVelocityThreshold} min={100} max={1000} step={50} />
+              <div className="flex justify-between text-xs mb-1"><span className="text-muted-foreground">Velocity Threshold</span><span className="font-bold">{settingsState.velocityThreshold[0]}%</span></div>
+              <Slider value={settingsState.velocityThreshold} onValueChange={(value) => setSettingsState((prev) => ({ ...prev, velocityThreshold: value }))} min={100} max={1000} step={50} />
             </div>
             <div>
-              <div className="flex justify-between text-xs mb-1"><span className="text-muted-foreground">Dormancy Period Alert</span><span className="font-bold">{dormancyPeriod[0]} months</span></div>
-              <Slider value={dormancyPeriod} onValueChange={setDormancyPeriod} min={3} max={36} step={1} />
+              <div className="flex justify-between text-xs mb-1"><span className="text-muted-foreground">Dormancy Period Alert</span><span className="font-bold">{settingsState.dormancyPeriod[0]} months</span></div>
+              <Slider value={settingsState.dormancyPeriod} onValueChange={(value) => setSettingsState((prev) => ({ ...prev, dormancyPeriod: value }))} min={3} max={36} step={1} />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground">Structuring Threshold (₹)</label>
-              <input value={structuringAmount} onChange={(e) => setStructuringAmount(e.target.value)} className="w-full bg-background border border-border rounded-md py-1.5 px-2 mt-1 text-xs text-foreground" />
+              <label className="text-xs text-muted-foreground">Structuring Threshold (INR)</label>
+              <input value={settingsState.structuringAmount} onChange={(event) => setSettingsState((prev) => ({ ...prev, structuringAmount: event.target.value }))} className="w-full bg-background border border-border rounded-md py-1.5 px-2 mt-1 text-xs text-foreground" />
             </div>
             <div>
               <label className="text-xs text-muted-foreground">Mule Account Age (days)</label>
-              <input value={muleAge} onChange={(e) => setMuleAge(e.target.value)} className="w-full bg-background border border-border rounded-md py-1.5 px-2 mt-1 text-xs text-foreground" />
+              <input value={settingsState.muleAge} onChange={(event) => setSettingsState((prev) => ({ ...prev, muleAge: event.target.value }))} className="w-full bg-background border border-border rounded-md py-1.5 px-2 mt-1 text-xs text-foreground" />
             </div>
             <div>
-              <div className="flex justify-between text-xs mb-1"><span className="text-muted-foreground">Min Hop Count</span><span className="font-bold">{minHops[0]}</span></div>
-              <Slider value={minHops} onValueChange={setMinHops} min={2} max={10} step={1} />
+              <div className="flex justify-between text-xs mb-1"><span className="text-muted-foreground">Min Hop Count</span><span className="font-bold">{settingsState.minHops[0]}</span></div>
+              <Slider value={settingsState.minHops} onValueChange={(value) => setSettingsState((prev) => ({ ...prev, minHops: value }))} min={2} max={10} step={1} />
             </div>
           </div>
         </div>
 
-        {/* Detection Modules */}
         <div className="bg-card border border-border rounded-[10px] p-5">
-          <div className="text-xs font-semibold text-foreground uppercase tracking-wide mb-4">Detection Modules</div>
+          <div className="text-xs font-semibold text-foreground uppercase tracking-wide mb-4">Detection Modules (Local Toggles)</div>
           <div className="space-y-3">
             {[
               { key: "layering", label: "Rapid Layering Detection" },
@@ -114,19 +245,26 @@ export default function SettingsPage() {
               { key: "dormant", label: "Dormant Account Activation" },
               { key: "profile", label: "Customer Profile Mismatch" },
               { key: "mule", label: "Mule Account Detection" },
-            ].map((m) => (
-              <div key={m.key} className="flex items-center justify-between">
-                <span className="text-xs text-foreground">{m.label}</span>
-                <Switch checked={(modules as any)[m.key]} onCheckedChange={(v) => setModules({ ...modules, [m.key]: v as boolean })} />
+            ].map((module) => (
+              <div key={module.key} className="flex items-center justify-between">
+                <span className="text-xs text-foreground">{module.label}</span>
+                <Switch
+                  checked={settingsState.modules[module.key]}
+                  onCheckedChange={(value) =>
+                    setSettingsState((prev) => ({
+                      ...prev,
+                      modules: { ...prev.modules, [module.key]: value as boolean },
+                    }))
+                  }
+                />
               </div>
             ))}
           </div>
         </div>
 
-        {/* Notification Settings */}
         <div className="bg-card border border-border rounded-[10px] p-5">
           <div className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-2 mb-4">
-            <Bell className="w-4 h-4" /> Notification Settings
+            <Bell className="w-4 h-4" /> Notification Settings (Local)
           </div>
           <div className="space-y-3">
             {[
@@ -134,36 +272,37 @@ export default function SettingsPage() {
               { key: "sms", label: "SMS Alerts" },
               { key: "inApp", label: "In-App Notifications" },
               { key: "strReminder", label: "STR Deadline Reminders" },
-            ].map((n) => (
-              <div key={n.key} className="flex items-center justify-between">
-                <span className="text-xs text-foreground">{n.label}</span>
-                <Switch checked={(notifications as any)[n.key]} onCheckedChange={(v) => setNotifications({ ...notifications, [n.key]: v as boolean })} />
+            ].map((notification) => (
+              <div key={notification.key} className="flex items-center justify-between">
+                <span className="text-xs text-foreground">{notification.label}</span>
+                <Switch
+                  checked={settingsState.notifications[notification.key]}
+                  onCheckedChange={(value) =>
+                    setSettingsState((prev) => ({
+                      ...prev,
+                      notifications: { ...prev.notifications, [notification.key]: value as boolean },
+                    }))
+                  }
+                />
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      {/* System Status */}
       <div className="bg-card border border-border rounded-[10px] p-5">
         <div className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-2 mb-4">
-          <Server className="w-4 h-4" /> System Status
+          <Server className="w-4 h-4" /> System Status (Live)
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {[
-            { name: "Neo4j Graph DB", status: "Online", detail: "99.97% uptime" },
-            { name: "Kafka Stream", status: "Active", detail: "864K txn/day" },
-            { name: "ML Engine", status: "Running", detail: "XGBoost + GNN + IF" },
-            { name: "FIU-IND API", status: "Connected", detail: "FINnet 2.0" },
-            { name: "Qwen LLM", status: "Available", detail: "v3.5 9B loaded" },
-          ].map((s) => (
-            <div key={s.name} className="text-center p-3 bg-muted/50 rounded-lg">
-              <div className="text-xs font-semibold text-foreground">{s.name}</div>
-              <div className="text-[10px] text-success font-medium mt-1 flex items-center justify-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                {s.status}
+          {systemCards.map((card) => (
+            <div key={card.name} className="text-center p-3 bg-muted/50 rounded-lg">
+              <div className="text-xs font-semibold text-foreground">{card.name}</div>
+              <div className={`text-[10px] font-medium mt-1 flex items-center justify-center gap-1 ${card.ok ? "text-success" : "text-danger"}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${statusLoading ? "bg-warning" : card.ok ? "bg-success" : "bg-danger"}`} />
+                {statusLoading ? "Loading" : card.status}
               </div>
-              <div className="text-[10px] text-muted-foreground">{s.detail}</div>
+              <div className="text-[10px] text-muted-foreground">{card.detail}</div>
             </div>
           ))}
         </div>

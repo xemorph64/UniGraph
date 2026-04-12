@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 import uuid
 from datetime import datetime
@@ -46,7 +46,7 @@ async def get_transaction(txn_id: str):
     """Get transaction details with SHAP explanation."""
     txn = await neo4j_service.get_transaction(txn_id)
     if not txn:
-        return {"error": "Transaction not found"}
+        raise HTTPException(status_code=404, detail="Transaction not found")
     return txn
 
 

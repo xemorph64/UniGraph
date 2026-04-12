@@ -8,6 +8,32 @@ router = APIRouter()
 logger = structlog.get_logger()
 
 
+async def _create_graph_audit_event_safe(
+    *,
+    actor_id: str,
+    actor_role: str,
+    status: str,
+    metadata: dict,
+) -> None:
+    try:
+        await neo4j_service.create_audit_event(
+            event_type="GRAPH_ANALYTICS_RUN",
+            actor_id=actor_id,
+            actor_role=actor_role,
+            action="run_gds_analytics",
+            status=status,
+            metadata=metadata,
+        )
+    except Exception as exc:
+        logger.warning(
+            "graph_analytics_audit_write_failed",
+            actor_id=actor_id,
+            actor_role=actor_role,
+            status=status,
+            error=str(exc),
+        )
+
+
 @router.post("/run")
 async def run_graph_analytics(
     request: Request,
@@ -22,11 +48,9 @@ async def run_graph_analytics(
     )
     try:
         result = await neo4j_service.run_gds_analytics()
-        await neo4j_service.create_audit_event(
-            event_type="GRAPH_ANALYTICS_RUN",
+        await _create_graph_audit_event_safe(
             actor_id=user.user_id,
             actor_role=user.role,
-            action="run_gds_analytics",
             status="SUCCESS",
             metadata={
                 "graph": result.get("graph", {}),
@@ -43,11 +67,9 @@ async def run_graph_analytics(
         )
         return {"status": "ok", "analytics_run": result}
     except Exception as exc:
-        await neo4j_service.create_audit_event(
-            event_type="GRAPH_ANALYTICS_RUN",
+        await _create_graph_audit_event_safe(
             actor_id=user.user_id,
             actor_role=user.role,
-            action="run_gds_analytics",
             status="FAILED",
             metadata={"error": str(exc)},
         )

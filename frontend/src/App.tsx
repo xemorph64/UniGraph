@@ -10,6 +10,7 @@ import TransactionMonitor from "@/pages/TransactionMonitor";
 import STRGenerator from "@/pages/STRGenerator";
 import CopilotPage from "@/pages/CopilotPage";
 import SettingsPage from "@/pages/SettingsPage";
+import TestCasesPage from "@/pages/TestCasesPage";
 import NotFound from "@/pages/NotFound";
 
 import { ThemeProvider } from "@/components/theme-provider";
@@ -30,6 +31,7 @@ const App = () => (
               <Route path="/transactions" element={<TransactionMonitor />} />
               <Route path="/str-generator" element={<STRGenerator />} />
               <Route path="/copilot" element={<CopilotPage />} />
+              <Route path="/test-cases" element={<TestCasesPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
             <Route path="*" element={<NotFound />} />

@@ -1,12 +1,13 @@
 import asyncio
 from contextlib import asynccontextmanager
 import structlog
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from .config import settings
 from .services.neo4j_service import neo4j_service
+from .services.fraud_scorer import fraud_scorer
 from .services.timeline_service import timeline_service
 from .routers import (
     transactions,
@@ -160,18 +161,41 @@ app.include_router(
 
 
 @app.get("/health")
-async def health():
+async def health(response: Response):
     neo4j_ok = False
+    ml_readiness = {
+        "ml_service_reachable": False,
+        "ml_service_url": settings.ML_SERVICE_URL,
+        "fallback_mode_available": True,
+    }
     try:
         stats = await neo4j_service.get_graph_stats()
         neo4j_ok = True
     except Exception:
         stats = {}
+
+    try:
+        ml_readiness = await fraud_scorer.get_ml_readiness()
+    except Exception as exc:
+        ml_readiness["ml_error"] = str(exc)
+
+    ml_ok = bool(ml_readiness.get("ml_service_reachable"))
+    if neo4j_ok and ml_ok:
+        overall_status = "healthy"
+        response.status_code = 200
+    elif neo4j_ok:
+        overall_status = "degraded"
+        response.status_code = 200
+    else:
+        overall_status = "unhealthy"
+        response.status_code = 503
+
     return {
-        "status": "healthy",
+        "status": overall_status,
         "version": "1.0.0",
         "neo4j": "connected" if neo4j_ok else "disconnected",
         "graph_stats": stats,
+        "fraud_scoring": ml_readiness,
         "demo_mode": settings.DEMO_MODE,
     }
 

@@ -1,165 +1,370 @@
-# UniGRAPH Transparent Repository Audit (Code-Verified)
+# UniGRAPH Transparent Repository Audit (Code + Runtime Verified)
 
-Date: 2026-04-11
-Scope: `C:/vs code/UniGRAPH2` only
-Method: direct source inspection + IDE diagnostics (`get_errors`), no assumptions from planning docs
+Date: 2026-04-12  
+Workspace: /home/ojasbhalerao/Documents/Uni  
+Method: direct source inspection + live runtime validation + scripted tests
 
-## 1) Direct correction to earlier misread
+## 1) Findings First (Ordered by Severity)
 
-I previously overstated ML completeness. The corrected, code-backed status is:
+### F1 - Enforcement write path appears non-persistent at runtime
+Observed behavior:
+- POST /api/v1/enforcement/lien returned 200 with a valid lien id.
+- GET /api/v1/enforcement/actions returned an empty list.
+- GET /api/v1/enforcement/actions/{lien_id} returned 404.
 
-- `ml/serving/ml_service.py` is implemented and runnable.
-- `ml/models/graphsage/train.py` is scaffold only (`NotImplementedError`).
-- `ml/models/graphsage/evaluate.py` is scaffold only (`NotImplementedError`).
-- `ml/models/graphsage/model.py` defines the class but core methods are unimplemented (`NotImplementedError`).
+Why this is serious:
+- Maker-checker and legal action auditability cannot be trusted if actions are acknowledged but not retrievable.
 
-So: online scoring service exists, but GraphSAGE training/evaluation/model-forward training path is not implemented.
+Code-level risk indicator:
+- Enforcement create routes swallow persistence exceptions:
+  - backend/app/routers/enforcement.py contains multiple `try: await neo4j_service.create_enforcement_action(...)
+    except Exception: pass` blocks.
 
-## 2) Architecture observed in code (not vision)
+### F2 - Graph analytics execution endpoint fails while status endpoint works
+Observed behavior:
+- GET /api/v1/graph-analytics/status -> 200 with populated metrics.
+- POST /api/v1/graph-analytics/run -> 500 Internal Server Error (text/plain).
 
-### Runtime flow that is actually implemented
+Why this is serious:
+- Manual recovery/recompute path is broken during operations, even though read-only status is available.
 
-1. Transaction enters backend via `POST /api/v1/transactions/ingest` in `backend/app/routers/transactions.py`.
-2. Backend fraud scoring runs in `backend/app/services/fraud_scorer.py`.
-3. Backend attempts ML call to `ML_SERVICE_URL/api/v1/ml/score`; if unavailable, it falls back to deterministic rules.
-4. Account and transaction graph entities are written to Neo4j via `backend/app/services/neo4j_service.py`.
-5. Alerts are created for high-risk scores and pushed over WebSocket via `backend/app/routers/ws.py`.
-6. Investigation endpoint (`/alerts/{id}/investigate`) returns alert + subgraph + LLM note.
-7. STR generation/submission endpoints are present in `backend/app/routers/reports.py`.
-8. Enforcement maker-checker endpoints are present in `backend/app/routers/enforcement.py`.
+### F3 - CDC ingestion verification is currently failing end-to-end
+Observed behavior:
+- ingestion/verify_db_ingestion.py failed: txn not observed in raw-transactions, enriched-transactions, rule-violations.
+- Debezium Connect had no registered connectors (`GET /connectors` returned `[]`).
+- `GET /connectors/finacle-cdc/status` returned 404.
 
-### Streaming/ingestion implementation status
+Why this is serious:
+- DB->Debezium->Kafka->Flink path is not active by default in this runtime state.
 
-- Flink jobs are implemented in:
-  - `ingestion/flink/jobs/TransactionEnrichmentJob.java`
-  - `ingestion/flink/jobs/AnomalyWindowJob.java`
-- E2E and DB ingestion verification scripts are implemented:
-  - `ingestion/verify_e2e_ingestion.py`
-  - `ingestion/verify_db_ingestion.py`
-- Kafka producer/CDC mock generator and tests are implemented:
-  - `ingestion/debezium/mock-cbs-generator.py`
-  - `ingestion/debezium/tests/test_mock_cbs_generator.py`
+### F4 - Kafka topic durability settings are inconsistent with current topic state
+Observed behavior:
+- Topic describes showed replication factor 1 and min.insync.replicas 2.
+- Local producer with default settings timed out (`Local: Message timed out`).
+- Producer succeeded with `acks=1`.
 
-### Frontend status in this repo
+Why this is serious:
+- Producers using default `acks=all` can stall/fail in this state.
 
-- This repo currently has a single primary app surface (dashboard route):
-  - `frontend/src/App.tsx`
-  - `frontend/src/main.tsx`
-- It is wired to live backend endpoints and websocket alerts through `frontend/src/services/api.ts`.
+### F5 - Provider smoke script is non-conclusive by default
+Observed behavior:
+- scripts/provider_live_smoke.py reported PASS only because all checks were skipped (missing process env vars).
+- This script reads os.environ directly and does not load .env itself.
 
-## 3) What is built vs partial vs missing
+Why this is serious:
+- PASS can be misread as real provider readiness when it is only a skip-only pass.
 
-## Built (code exists and is wired)
+### F6 - Frontend is mixed reality, not fully live-backed
+Observed behavior:
+- Dashboard/Alerts/Transaction Monitor use live backend + websocket.
+- Graph Explorer/STR Generator/Copilot/Settings/TestCases are mostly local data, canned behavior, and simulated timeouts/toasts.
 
-- Backend API composition and routing (`backend/app/main.py`)
-- Neo4j persistence and graph query service (`backend/app/services/neo4j_service.py`)
-- Fraud scoring pipeline with rules + ML-service call fallback (`backend/app/services/fraud_scorer.py`)
-- LLM service integration path (Groq + mock fallback) (`backend/app/services/llm_service.py`)
-- Alerts websocket push (`backend/app/routers/ws.py`)
-- STR lifecycle endpoints including approve/reject and submit (`backend/app/routers/reports.py`)
-- Enforcement lifecycle endpoints including approve/reject (`backend/app/routers/enforcement.py`)
-- Timeline service with Cassandra primary + Neo4j fallback (`backend/app/services/timeline_service.py`)
-- Flink ingestion jobs and packaging (`ingestion/flink/pom.xml`, jobs/*.java)
-- Docker Compose local infra stack for core dependencies (`docker/docker-compose.yml`)
-- Provider and infra smoke scripts (`scripts/provider_live_smoke.py`, `scripts/infra_stack_smoke.py`)
-- Backend test suite for approval/enforcement/workflow routes (`backend/tests/*`)
+Why this is serious:
+- Demo UX can imply production integration where none exists.
 
-## Partially built (implemented, but not production-complete)
+## 2) Step-by-Step Test Log (Executed)
 
-- ML serving is operational but primarily fallback-first in absence of trained artifacts:
-  - `ml/serving/ml_service.py` can train simple fallback linear models from local CSV/SQL.
-  - Real model loading is conditional on model files existing.
-- Graph analytics exists in backend (`run_gds_analytics`) but depends on Neo4j GDS plugin and runtime data shape.
-- External provider integrations (Finacle/FIU/NCRP) are HTTP wrappers but minimal hardening:
-  - basic request/response handling only, limited resilience patterns.
-- CI/CD workflows exist under `ci-cd/.github/workflows/*`, but deployment jobs include scaffold/placeholder steps.
-- Kubernetes overlays exist, but manifests are skeletal (mostly namespace/base references).
+1. Infra readiness check
+Command:
+```bash
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python scripts/infra_stack_smoke.py --compose-file docker/docker-compose.yml --timeout 12 --backend-health-url http://127.0.0.1:8000/health
+```
+Result:
+- PASS
+- Kafka, Schema Registry, Debezium Connect, Neo4j, Cassandra, Redis, Vault, backend health all reachable.
 
-## Not built or scaffold-only
+2. ML service probe
+Command:
+```bash
+curl -sS -i http://127.0.0.1:8002/api/v1/ml/health
+```
+Result:
+- Connection failed (service not running on 8002 in current runtime).
 
-- GraphSAGE training/evaluation/model training loops:
-  - `ml/models/graphsage/train.py`
-  - `ml/models/graphsage/evaluate.py`
-  - `ml/models/graphsage/model.py`
-- Drools rule engine execution path is not implemented end-to-end:
-  - rules are placeholders in `rules/src/main/resources/rules/*.drl`
-  - no Java rule execution service in `rules/src/main/java` (directory absent)
-- Compliance pack is placeholder-level:
-  - `compliance/README.md` says placeholder bootstrap
-- Kubernetes production workload manifests are not present (Deployments/Services/HPA/etc).
-- Contract alignment is incomplete (see section 4).
+3. Backend tests
+Command:
+```bash
+PYTHONPATH=/home/ojasbhalerao/Documents/Uni /home/ojasbhalerao/Documents/Uni/.venv/bin/python -m pytest backend/tests -q
+```
+Result:
+- 51 passed in 6.92s.
 
-## 4) Code-vs-doc drift and interface drift
+4. Frontend tests and build
+Command:
+```bash
+cd frontend && npm test -- --run --reporter=dot && npm run build
+```
+Result:
+- 1 test passed.
+- Build succeeded.
+- Large chunk warning present (>500 kB).
 
-### Documentation drift
+5. ML + Debezium unit tests
+Command:
+```bash
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python -m pytest /home/ojasbhalerao/Documents/Uni/ml/tests/test_smoke.py /home/ojasbhalerao/Documents/Uni/ingestion/debezium/tests/test_mock_cbs_generator.py -q
+```
+Result:
+- 4 passed.
 
-- README claims on-prem Qwen usage, but runtime code uses Groq settings by default:
-  - docs: `README.md`
-  - code: `backend/app/services/llm_service.py`, `backend/app/config.py`
-- README claims full 3-model ML ensemble; code currently supports this only if model artifacts are present, otherwise fallback linear/rule path dominates.
+6. Fraud detection script
+Command:
+```bash
+PYTHONPATH=/home/ojasbhalerao/Documents/Uni /home/ojasbhalerao/Documents/Uni/.venv/bin/python scripts/test_fraud_detection.py
+```
+Result:
+- Script completed successfully for circular, rapid-layering, dormant-awakening, and mule-network test scenarios.
 
-### API/contract drift
+7. Provider smoke
+Command:
+```bash
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python scripts/provider_live_smoke.py
+```
+Result:
+- PASS with all checks skipped (FINACLE_API_URL/FIU_IND_API_URL/NCRP_API_URL missing in process env).
 
-- `contracts/ml-scoring-protocol.json` request fields (`source_account`, `destination_account`) do not match actual ML service request shape (`enriched_transaction` object) in `ml/serving/ml_service.py`.
-- OpenAPI docs are high-level and not fully synchronized with all backend route payload details.
+8. CDC verifier
+Command:
+```bash
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python ingestion/verify_db_ingestion.py --bootstrap localhost:19092 --timeout 60 --db-host localhost --db-port 5433 --db-name finacle_cbs --db-user postgres --db-password postgres
+```
+Result:
+- FAIL: not found in all three topics (raw/enriched/rule).
 
-### CI/CD structure drift
+9. Debezium connector status
+Commands:
+```bash
+curl -sS http://127.0.0.1:8083/connectors
+curl -sS http://127.0.0.1:8083/connectors/finacle-cdc/status
+```
+Result:
+- `[]`
+- 404 no status found.
 
-- Workflows are inside `ci-cd/.github/workflows`.
-- GitHub Actions natively expects `.github/workflows` at repository root.
-- If not mirrored/symlinked in repo root, these workflows will not run automatically in GitHub.
+10. Graph and enforcement runtime probes
+Result:
+- /api/v1/graph-analytics/status -> 200.
+- /api/v1/graph-analytics/run -> 500.
+- /api/v1/enforcement/lien -> 200 with lienId.
+- /api/v1/enforcement/actions -> empty.
+- /api/v1/enforcement/actions/{id} -> 404.
 
-## 5) Operational risks found
+Note on interrupted remediation:
+- Attempt to register Debezium connector from ingestion/debezium/connector-config.json was initiated but canceled during execution, so this run did not mutate connector state.
 
-1. Non-demo startup can fail hard by default unless provider credentials are present.
-   - `backend/app/config.py` has `DEMO_MODE = False` default.
-   - `backend/app/main.py` enforces provider config in non-demo mode.
+## 3) Architecture Map (What Exists in Code)
 
-2. Frontend auth redirect points to `/login`, but this repo frontend routes only `/` and `/dashboard`.
-   - `frontend/src/services/api.ts` redirects to `/login` on 401.
-   - `frontend/src/main.tsx` does not define `/login` route.
+### A) API-driven path (currently active)
 
-3. Flink code uses deprecated Kafka APIs.
-   - IDE diagnostics flag deprecated `FlinkKafkaConsumer`/`FlinkKafkaProducer` usage in job files.
-   - Works today but increases upgrade risk.
+Frontend (React, Vite)
+-> FastAPI backend
+-> Fraud scorer (rule-first, optional ML call)
+-> Neo4j persistence
+-> Alerts + WebSocket push
+-> Investigator flows (cases/reports/enforcement)
 
-4. Rules engine mismatch.
-   - Fraud typologies are enforced in Python heuristics (`fraud_scorer.py`), while Drools rules are placeholders.
+### B) Streaming path (implemented but not fully active in current runtime)
 
-5. Kubernetes readiness gap.
-   - Base/overlays mostly namespace wiring without app deployments.
+Postgres transactions table
+-> Debezium connector
+-> Kafka raw-transactions
+-> Flink enrichment/anomaly jobs
+-> Kafka enriched-transactions + rule-violations
+-> downstream consumers (bridge/writer/backend workflows)
 
-## 6) What is demonstrably runnable now
+### C) External integration hooks
 
-With dependencies available, this repository supports a real local demo path:
+Backend services call:
+- FinacleService (oauth token + account lien/freeze/hold endpoints)
+- FIUIndService (mTLS STR/CTR submission + status)
+- NCRPService (complaint submission/status)
+- ML scoring service at ML_SERVICE_URL/api/v1/ml/score
 
-- Backend API with graph-backed alerting and investigations.
-- Frontend dashboard pulling live alerts and websocket events.
-- Streaming ingestion scripts/jobs for Kafka/Flink pipeline.
-- STR and enforcement API flows (with demo/provider-conditional behavior).
+## 4) Backend Endpoint Surface (From Routers)
 
-## 7) Maturity snapshot (evidence-based)
+Mounted prefixes are defined in backend/app/main.py.
 
-- API/domain workflow maturity: Medium-High
-- Streaming ingestion maturity: Medium
-- ML training/MLOps maturity: Low-Medium
-- Rule engine maturity: Low
-- Kubernetes/prod deployment maturity: Low
-- Compliance artifact maturity: Low
-- End-to-end local demo maturity: Medium-High
+- /api/v1/transactions
+  - GET /
+  - GET /{txn_id}
+  - POST /ingest
 
-## 8) Priority fixes (ordered)
+- /api/v1/accounts
+  - GET /{account_id}/graph
+  - GET /{account_id}/profile
+  - GET /{account_id}/timeline
 
-1. Implement GraphSAGE model/train/evaluate modules or explicitly remove training claims.
-2. Replace placeholder Drools rules with executable rule service or de-scope Drools from architecture.
-3. Add missing frontend auth route/workflow (or remove hard redirect to `/login`).
-4. Align contracts with actual backend/ML payload schemas.
-5. Move/duplicate CI workflows to repo-root `.github/workflows` for real automation.
-6. Add Kubernetes Deployments/Services/ConfigMaps/Secrets/HPA manifests for backend/frontend/ml components.
-7. Add production-grade provider client resilience (retry policy, timeout tiers, typed error mapping, audit-safe logging).
+- /api/v1/alerts
+  - GET /
+  - GET /{alert_id}
+  - POST /{alert_id}/acknowledge
+  - POST /{alert_id}/escalate
+  - GET /{alert_id}/investigate
 
-## 9) Bottom line
+- /api/v1/cases
+  - GET /
+  - GET /{case_id}
+  - POST /
+  - PUT /{case_id}/close
 
-This is not a fake repository and not just slides. Significant working code exists for backend domain flows, graph operations, streaming jobs, and live UI integration.
+- /api/v1/reports
+  - GET /str
+  - GET /str/{str_id}
+  - POST /str/generate
+  - POST /str/{str_id}/submit
+  - POST /str/{str_id}/approve
+  - POST /str/{str_id}/reject
 
-But it is also not fully production-complete. The largest gap is between platform claims (full ML + rule engine + production deployment posture) and what is currently implemented end-to-end in executable code.
+- /api/v1/fraud
+  - POST /score
+
+- /api/v1/enforcement
+  - GET /actions
+  - GET /actions/{action_id}
+  - POST /actions/{action_id}/approve
+  - POST /actions/{action_id}/reject
+  - POST /lien
+  - POST /freeze
+  - POST /hold
+  - POST /ncrp-report
+
+- /api/v1/graph-analytics
+  - GET /status
+  - POST /run
+
+- /api/v1/ws
+  - WS /alerts/{investigator_id}
+
+## 5) Frontend Reality Check (Per Route)
+
+Routes defined in frontend/src/App.tsx:
+
+1. /
+- Page: Dashboard
+- Source: Live API + WebSocket (listTransactions/listAlerts/connectAlertsWebSocket)
+- Verdict: Real backend data
+
+2. /alerts
+- Page: AlertsQueue
+- Source: Live API + WebSocket
+- Verdict: Real backend data
+
+3. /transactions
+- Page: TransactionMonitor
+- Source: Live API + WebSocket for updates
+- Verdict: Real backend data (with some local UI-only helper text)
+
+4. /graph
+- Page: GraphExplorer
+- Source: local `@/data/*`, local timeout/toast simulation
+- Verdict: Mock/static
+
+5. /str-generator
+- Page: STRGenerator
+- Source: local `@/data/alerts-data`, local narrative templates, simulated submit
+- Verdict: Mock/static
+
+6. /copilot
+- Page: CopilotPage
+- Source: local canned responses + timeout simulation
+- Verdict: Mock/static
+
+7. /settings
+- Page: SettingsPage
+- Source: local state only, static status cards
+- Verdict: Mock/static
+
+Additional note:
+- frontend/src/pages/TestCasesPage.tsx exists but is not routed in App.tsx.
+
+## 6) Built vs Partial vs Missing
+
+### Built (working components present)
+- FastAPI backend with multi-domain router surface.
+- Neo4j graph persistence and read flows.
+- Alert websocket pipeline.
+- Fraud scoring service with deterministic rules and optional ML call.
+- Core frontend shell and live pages (Dashboard/Alerts/Transactions).
+- Docker compose stack for local infra.
+- Backend test suite coverage with passing results.
+
+### Partial (implemented but operationally incomplete)
+- Graph analytics: status reads work; manual run endpoint fails in this runtime.
+- Enforcement workflows: API create succeeds but persistence/readback currently inconsistent.
+- Streaming ingestion: jobs/scripts exist, but CDC runtime not active out-of-the-box due connector/state issues.
+- Provider integration wrappers exist but runtime readiness is environment-dependent and not validated in this run.
+- ML service integration exists, but external ML service endpoint was down in this runtime and backend used fallback scoring.
+
+### Missing / Scaffold-only
+- GraphSAGE train/evaluate/model core implementation:
+  - ml/models/graphsage/train.py
+  - ml/models/graphsage/model.py
+  - ml/models/graphsage/evaluate.py
+- Drools rule content is placeholder-level (`eval(true)` + placeholder comments) in rules/src/main/resources/rules/*.drl.
+- Kubernetes manifests are scaffolding only (namespaces + kustomization overlays, no app Deployments/Services/HPA).
+
+## 7) Contract and Documentation Drift
+
+1. ML contract mismatch
+- contracts/ml-scoring-protocol.json expects source_account/destination_account.
+- ml/serving/ml_service.py expects enriched_transaction + graph_features.
+
+2. LLM/runtime messaging drift
+- README states on-prem Qwen.
+- backend/app/config.py defaults to Groq provider settings.
+- backend/app/services/llm_service.py uses Groq with mock fallback.
+
+3. Rules engine claim drift
+- README lists Drools rule engine.
+- repository Drools rules are placeholder patterns.
+
+4. CI workflow placement risk
+- Workflows are under ci-cd/.github/workflows.
+- No root .github/workflows found in this workspace snapshot.
+
+## 8) What Is Real and Demo-Usable Today
+
+Real and usable in local demo:
+- Backend API, auth/permission layer, graph writes/reads.
+- Live alert feed and websocket updates to frontend live pages.
+- Fraud scoring decisions (rule-based with optional ML blend).
+- Reports and case APIs (subject to endpoint-specific caveats).
+
+Not fully real in current runtime:
+- Full CDC ingestion chain activation without manual connector setup.
+- Manual graph analytics run endpoint reliability.
+- Enforcement action persistence integrity.
+- Real external provider validation (current smoke run was skip-only).
+- Full ML pipeline claims (GraphSAGE training path incomplete).
+
+## 9) Priority Fix Plan
+
+1. Fix enforcement persistence first
+- Remove silent exception swallowing in enforcement create routes.
+- Return explicit persistence errors.
+- Add integration test asserting create -> list/get roundtrip.
+
+2. Fix graph analytics run 500
+- Capture and log full exception stack.
+- Add health check for required GDS procedures before run.
+- Add test for /graph-analytics/run success path in demo dataset.
+
+3. Stabilize CDC ingestion bootstrap
+- Ensure Debezium connector auto-registration or explicit startup script step.
+- Reconcile Kafka topic RF/ISR settings with broker policy.
+- Add a one-command ingestion readiness script that validates connector + topic flow.
+
+4. Align contracts and docs with executable behavior
+- Update ml-scoring-protocol.json to real request shape.
+- Clarify Groq/demo fallback vs on-prem target state.
+- Mark mock/static frontend pages clearly in README and UI labels.
+
+5. Expand production readiness assets
+- Add Kubernetes workload manifests.
+- Move/duplicate CI workflows to repo root .github/workflows if GitHub Actions execution is required.
+
+## 10) Bottom Line
+
+This repository contains substantial real implementation, not just planning documents: backend flows, graph integration, live dashboard/alerts/transaction pages, and passing backend/frontend tests are present.
+
+At the same time, key production-critical paths are currently unstable or incomplete in runtime verification, especially enforcement persistence, graph analytics run, and CDC activation defaults. The frontend is intentionally mixed (live + mock), so what users see is only partially backed by real integrations today.

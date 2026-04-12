@@ -6,6 +6,7 @@ All queries must be async.
 
 from neo4j import AsyncGraphDatabase, AsyncDriver
 from typing import Optional, Any
+import json
 import structlog
 from ..config import settings
 
@@ -21,8 +22,31 @@ class Neo4jService:
     def _serialize_temporals(data: dict) -> dict:
         serialized = {}
         for key, value in data.items():
-            serialized[key] = value.isoformat() if hasattr(value, "isoformat") else value
+            normalized = value.isoformat() if hasattr(value, "isoformat") else value
+
+            # Neo4j properties cannot store nested maps directly; metadata is persisted as JSON text.
+            if key in {"metadata", "metadata_json"}:
+                serialized["metadata"] = Neo4jService._deserialize_metadata(normalized)
+                continue
+
+            serialized[key] = normalized
         return serialized
+
+    @staticmethod
+    def _serialize_metadata(metadata: Optional[dict]) -> str:
+        try:
+            return json.dumps(metadata or {}, ensure_ascii=True, separators=(",", ":"))
+        except Exception:
+            return "{}"
+
+    @staticmethod
+    def _deserialize_metadata(metadata: Any) -> Any:
+        if isinstance(metadata, str):
+            try:
+                return json.loads(metadata)
+            except Exception:
+                return metadata
+        return metadata
 
     async def connect(self):
         """Initialize Neo4j async driver."""
@@ -201,6 +225,63 @@ class Neo4jService:
                             }
                         )
             return {"nodes": nodes, "edges": edges}
+
+    async def get_scoring_graph_features(self, account_id: str) -> dict:
+        """Return graph-derived scoring features for an account.
+
+        These values are lightweight and safe to compute inline during scoring.
+        """
+        defaults = {
+            "connected_suspicious_nodes": 0,
+            "community_risk_score": 0.0,
+            "neighbor_avg_risk": 0.0,
+            "community_id": 0,
+            "pagerank": 0.0,
+            "betweenness_centrality": 0.0,
+        }
+
+        if not account_id:
+            return defaults
+
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (a:Account {id: $account_id})
+                OPTIONAL MATCH (a)-[:SENT*1..2]-(n:Account)
+                WITH a, collect(DISTINCT n) AS neighbors
+                WITH
+                  a,
+                  neighbors,
+                  size([n IN neighbors WHERE coalesce(n.risk_score, 0.0) >= 60.0]) AS connected_suspicious_nodes,
+                  CASE size(neighbors)
+                    WHEN 0 THEN 0.0
+                    ELSE reduce(total = 0.0, n IN neighbors | total + coalesce(n.risk_score, 0.0)) / toFloat(size(neighbors))
+                  END AS neighbor_avg_risk
+                RETURN
+                  connected_suspicious_nodes,
+                  coalesce(a.community_id, 0) AS community_id,
+                  coalesce(a.pagerank, 0.0) AS pagerank,
+                  coalesce(a.betweenness_centrality, 0.0) AS betweenness_centrality,
+                  neighbor_avg_risk
+                """,
+                account_id=account_id,
+            )
+            record = await result.single()
+            if not record:
+                return defaults
+
+            return {
+                "connected_suspicious_nodes": int(
+                    record["connected_suspicious_nodes"] or 0
+                ),
+                "community_risk_score": float(record["neighbor_avg_risk"] or 0.0),
+                "neighbor_avg_risk": float(record["neighbor_avg_risk"] or 0.0),
+                "community_id": int(record["community_id"] or 0),
+                "pagerank": float(record["pagerank"] or 0.0),
+                "betweenness_centrality": float(
+                    record["betweenness_centrality"] or 0.0
+                ),
+            }
 
     async def create_alert(self, alert: dict) -> dict:
         async with self.driver.session() as session:
@@ -656,7 +737,7 @@ class Neo4jService:
                     e.initiated_by = $initiated_by,
                     e.status = $status,
                     e.reference_id = $reference_id,
-                    e.metadata = $metadata,
+                    e.metadata_json = $metadata_json,
                     e.created_at = datetime(),
                     e.updated_at = datetime()
                 ON MATCH SET
@@ -666,7 +747,7 @@ class Neo4jService:
                     e.initiated_by = $initiated_by,
                     e.status = $status,
                     e.reference_id = $reference_id,
-                    e.metadata = $metadata,
+                    e.metadata_json = $metadata_json,
                     e.updated_at = datetime()
                 WITH e
                 OPTIONAL MATCH (a:Account {id: $account_id})
@@ -682,7 +763,7 @@ class Neo4jService:
                 initiated_by=initiated_by,
                 status=status,
                 reference_id=reference_id,
-                metadata=metadata or {},
+                metadata_json=self._serialize_metadata(metadata),
             )
             record = await result.single()
             return self._serialize_temporals(dict(record["e"])) if record else {}
@@ -767,14 +848,14 @@ class Neo4jService:
                     e.review_notes = $review_notes,
                     e.reviewed_at = datetime(),
                     e.updated_at = datetime(),
-                    e.metadata = $metadata
+                    e.metadata_json = $metadata_json
                 RETURN e
                 """,
                 action_id=action_id,
                 status=status,
                 reviewed_by=reviewed_by,
                 review_notes=review_notes,
-                metadata=metadata or {},
+                metadata_json=self._serialize_metadata(metadata),
             )
             record = await result.single()
             return self._serialize_temporals(dict(record["e"])) if record else None
@@ -798,7 +879,7 @@ class Neo4jService:
                     actor_role: $actor_role,
                     action: $action,
                     status: $status,
-                    metadata: $metadata,
+                    metadata_json: $metadata_json,
                     created_at: datetime()
                 })
                 RETURN ae
@@ -808,7 +889,7 @@ class Neo4jService:
                 actor_role=actor_role,
                 action=action,
                 status=status,
-                metadata=metadata or {},
+                metadata_json=self._serialize_metadata(metadata),
             )
             record = await result.single()
             return self._serialize_temporals(dict(record["ae"])) if record else {}

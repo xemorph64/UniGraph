@@ -274,8 +274,11 @@ async def mark_lien(
                 "initiated_by": request.initiatedBy,
             },
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to persist lien action: {exc}",
+        ) from exc
 
     return {
         "accountId": request.accountId,
@@ -331,8 +334,11 @@ async def freeze_account(
                 "initiated_by": request.initiatedBy,
             },
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to persist freeze action: {exc}",
+        ) from exc
 
     return {
         "accountId": request.accountId,
@@ -387,8 +393,11 @@ async def hold_transaction(
                 "initiated_by": request.initiatedBy,
             },
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to persist hold action: {exc}",
+        ) from exc
 
     return {
         "transactionId": request.transactionId,
@@ -437,8 +446,11 @@ async def submit_ncrp_report(
             reference_id=request.complaintId,
             metadata={"evidence": request.evidence},
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to persist NCRP action: {exc}",
+        ) from exc
 
     return {
         "complaintId": request.complaintId,

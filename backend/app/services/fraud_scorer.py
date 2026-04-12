@@ -48,6 +48,7 @@ FRAUD_TYPOLOGIES = {
 class FraudScorer:
     def __init__(self):
         self._ml_score_url = f"{settings.ML_SERVICE_URL.rstrip('/')}/api/v1/ml/score"
+        self._ml_health_url = f"{settings.ML_SERVICE_URL.rstrip('/')}/api/v1/ml/health"
 
     async def _score_with_ml_service(self, txn: dict, rule_violations: list[str]) -> Optional[dict]:
         payload = {
@@ -64,6 +65,9 @@ class FraudScorer:
             "graph_features": {
                 "connected_suspicious_nodes": int(txn.get("connected_suspicious_nodes", 0)),
                 "community_risk_score": float(txn.get("community_risk_score", 0.0)),
+                "community_id": int(txn.get("community_id", 0)),
+                "pagerank": float(txn.get("pagerank", 0.0)),
+                "betweenness_centrality": float(txn.get("betweenness_centrality", 0.0)),
             },
         }
         try:
@@ -72,8 +76,38 @@ class FraudScorer:
                 response.raise_for_status()
                 return response.json()
         except Exception as exc:
-            logger.warning("ml_service_unavailable_fallback_to_rules", error=str(exc))
+            logger.warning(
+                "ml_service_unavailable_fallback_to_rules",
+                endpoint=self._ml_score_url,
+                error=str(exc),
+            )
             return None
+
+    async def get_ml_readiness(self) -> dict:
+        """Return current ML readiness state for health probes."""
+        readiness = {
+            "ml_service_reachable": False,
+            "ml_service_url": settings.ML_SERVICE_URL,
+            "ml_model_version": None,
+            "fallback_mode_available": True,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(self._ml_health_url)
+                response.raise_for_status()
+                payload = response.json()
+                readiness.update(
+                    {
+                        "ml_service_reachable": payload.get("status") == "healthy",
+                        "ml_model_version": payload.get("model_version"),
+                        "ml_health": payload,
+                    }
+                )
+        except Exception as exc:
+            readiness["ml_error"] = str(exc)
+
+        return readiness
 
     async def score_transaction(self, txn: dict) -> dict:
         """
@@ -145,7 +179,29 @@ class FraudScorer:
 
         rule_based_score = min(round(risk_score), 100)
 
-        ml_result = await self._score_with_ml_service(txn, rule_violations)
+        graph_features = {
+            "connected_suspicious_nodes": int(txn.get("connected_suspicious_nodes", 0)),
+            "community_risk_score": float(txn.get("community_risk_score", 0.0)),
+            "community_id": int(txn.get("community_id", 0)),
+            "pagerank": float(txn.get("pagerank", 0.0)),
+            "betweenness_centrality": float(txn.get("betweenness_centrality", 0.0)),
+        }
+
+        if from_account:
+            try:
+                extracted = await neo4j_service.get_scoring_graph_features(from_account)
+                graph_features.update(extracted)
+            except Exception as exc:
+                logger.warning(
+                    "graph_feature_extraction_failed",
+                    account_id=from_account,
+                    error=str(exc),
+                )
+
+        txn_for_ml = dict(txn)
+        txn_for_ml.update(graph_features)
+
+        ml_result = await self._score_with_ml_service(txn_for_ml, rule_violations)
         if ml_result:
             ml_score = max(0, min(100, int(round(float(ml_result.get("xgboost_risk_score", 0))))))
             # Blend learned score with deterministic rule signals to preserve typology explainability.
@@ -156,6 +212,15 @@ class FraudScorer:
             shap_top3 = list(ml_result.get("shap_top3") or shap_contributions[:3])
             model_version = str(ml_result.get("model_version", "ml-service-unknown"))
             scoring_timestamp = str(ml_result.get("timestamp", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")))
+            logger.info(
+                "ml_service_score_applied",
+                txn_id=txn.get("txn_id"),
+                model_version=model_version,
+                connected_suspicious_nodes=graph_features.get(
+                    "connected_suspicious_nodes", 0
+                ),
+                community_risk_score=graph_features.get("community_risk_score", 0.0),
+            )
         else:
             risk_score = rule_based_score
             gnn_fraud_probability = min(risk_score / 100, 1.0)
@@ -190,6 +255,7 @@ class FraudScorer:
             "xgboost_risk_score": xgboost_risk_score,
             "model_version": model_version,
             "scoring_timestamp": scoring_timestamp,
+            "graph_features": graph_features,
         }
 
         logger.info(

@@ -97,9 +97,11 @@ async def generate_str(request: STRGenerateRequest):
             narrative=narrative,
             generated_by="LLM",
         )
-    except Exception:
-        # Keep generation successful even if persistence is temporarily unavailable.
-        pass
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to persist STR draft: {exc}",
+        ) from exc
 
     return STRGenerateResponse(
         str_id=str_id,
@@ -165,8 +167,11 @@ async def submit_str(str_id: str, request: STRSubmitRequest):
             reference_id=reference_id,
             status=status.upper(),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to persist STR submission: {exc}",
+        ) from exc
 
     return {
         "str_id": str_id,

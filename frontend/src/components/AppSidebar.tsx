@@ -1,4 +1,4 @@
-import { LayoutDashboard, AlertTriangle, GitGraph, Monitor, FileText, Bot, Settings } from "lucide-react";
+import { LayoutDashboard, AlertTriangle, GitGraph, Monitor, FileText, Bot, Settings, FlaskConical } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -55,6 +55,7 @@ export function AppSidebar() {
     { title: "Transaction Monitor", url: "/transactions", icon: Monitor },
     { title: "STR Generator", url: "/str-generator", icon: FileText },
     { title: "Investigator Copilot", url: "/copilot", icon: Bot },
+    { title: "Test Cases", url: "/test-cases", icon: FlaskConical },
   ];
 
   const isActive = (url: string) => url === "/" ? location.pathname === "/" : location.pathname.startsWith(url);

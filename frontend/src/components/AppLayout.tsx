@@ -12,6 +12,7 @@ const breadcrumbMap: Record<string, string> = {
   "/copilot": "Investigator Copilot",
   "/transactions": "Transaction Monitor",
   "/str-generator": "STR Generator",
+  "/test-cases": "Test Cases",
   "/settings": "Settings & Profile",
 };
 

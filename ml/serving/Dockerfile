@@ -6,6 +6,8 @@ COPY ml/serving/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ml/ ./ml/
+COPY transactions_dataset.csv ./transactions_dataset.csv
+COPY transactions_inserts.sql ./transactions_inserts.sql
 
 ARG MODEL_URL
 RUN mkdir -p /models

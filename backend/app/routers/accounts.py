@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 
 from ..services.neo4j_service import neo4j_service
@@ -44,7 +44,7 @@ async def get_account_profile(account_id: str):
         record = await result.single()
         if record:
             return dict(record["a"])
-        return {"error": "Account not found"}
+        raise HTTPException(status_code=404, detail="Account not found")
 
 
 @router.get("/{account_id}/timeline")

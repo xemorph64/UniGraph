@@ -10,11 +10,11 @@ An end-to-end, graph-native fund flow tracking platform designed as a pluggable 
 
 - Ingests real-time transactional data from CBS via Debezium CDC + Kafka
 - Builds a **dynamic Financial Knowledge Graph** in Neo4j
-- Applies a **3-model ML ensemble** (GraphSAGE GNN + Isolation Forest + XGBoost)
+- Applies a **live ML scoring service** with fallback linear models, and uses GraphSAGE/IF/XGBoost artifacts when available
 - Detects fraud patterns in **sub-500ms**
 - Provides investigators an **interactive graph explorer** with time-travel
 - Auto-generates **FIU-IND compliant STR/CTR/CBWTR/NTR** reports in 1 click
-- Uses an **on-premise Qwen 3.5 9B LLM** to draft investigation narratives
+- Uses configurable LLM providers (Groq by default, on-prem models supported) to draft investigation narratives
 
 ## Key Targets
 
@@ -36,8 +36,8 @@ An end-to-end, graph-native fund flow tracking platform designed as a pluggable 
 | Time-Series | Apache Cassandra 4.x |
 | Cache | Redis 7.x |
 | Rule Engine | Apache Drools 9.x |
-| ML | PyTorch Geometric (GNN) + XGBoost + SHAP |
-| LLM | Qwen 3.5 9B (on-premise via vLLM/Ollama) |
+| ML | FastAPI ML scoring service + fallback models; GraphSAGE/XGBoost/IF when artifacts exist |
+| LLM | Configurable provider (Groq default, on-prem compatible) |
 | Infra | Docker Compose (dev) + Kubernetes (prod) |
 | CI/CD | GitHub Actions + ArgoCD + Trivy + SonarQube |
 
@@ -58,21 +58,24 @@ See the implementation plan for detailed setup instructions.
 git clone <repo-url>
 cd unigraph
 
-# Start full dev stack (once Docker Compose is implemented)
+# Start full dev stack (infrastructure + services)
 docker compose -f docker/docker-compose.yml up -d
 
-# Run backend
+# Run backend locally (only if you are not already running backend in compose)
 cd backend && pip install -r requirements.txt && uvicorn app.main:app --reload
 
 # Run frontend
 cd frontend && npm install && npm run dev
 ```
 
+Note: Avoid running multiple backend instances on the same port (`8000`). If runtime checks look stale, verify the active process on `:8000` and restart the intended backend process.
+
 ## Documentation
 
 - **Implementation Plan**: `UniGRAPH_3_Person_Implementation_Plan.md` — Master guide for all 3 developers
 - **Research & Architecture**: `UniGRAPH_Research_and_Planning.md` — Full blueprint with compliance, Finacle integration, risk register
 - **Smoke Validation**: `scripts/SMOKE_VALIDATION.md` — Live provider checks and infra stack readiness checks
+- **Live Demo Runner**: `scripts/run_live_demo.py` — Deterministic ingest -> alert -> investigate -> STR generate/submit validation
 
 ## Validation Workflows
 

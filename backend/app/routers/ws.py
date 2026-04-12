@@ -1,8 +1,10 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Dict
 import json
+import structlog
 
 router = APIRouter()
+logger = structlog.get_logger()
 
 
 class ConnectionManager:
@@ -22,7 +24,12 @@ class ConnectionManager:
         for investigator_id, ws in self.active_connections.items():
             try:
                 await ws.send_text(message)
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "ws_alert_send_failed",
+                    investigator_id=investigator_id,
+                    error=str(exc),
+                )
                 disconnected.append(investigator_id)
 
         for investigator_id in disconnected:

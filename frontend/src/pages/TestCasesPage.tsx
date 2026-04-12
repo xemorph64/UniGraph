@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Play, Eye } from "lucide-react";
 import { toast } from "sonner";
 import ForceGraph from "@/components/ForceGraph";
+import { ingestTransaction } from "@/lib/unigraph-api";
 
 function mapFraudTypeToGraph(fraudType: string): string {
   const map: Record<string, string> = {
@@ -24,11 +25,75 @@ function mapFraudTypeToGraph(fraudType: string): string {
 export default function TestCasesPage() {
   const navigate = useNavigate();
   const [previewCase, setPreviewCase] = useState<any>(null);
+  const [runningCaseId, setRunningCaseId] = useState<string | null>(null);
+
+  const parseAmount = (value: string): number => {
+    const numeric = Number(String(value).replace(/[^0-9.]/g, ""));
+    return Number.isFinite(numeric) ? numeric : 0;
+  };
+
+  const buildSimulationPayload = (testCase: any) => {
+    const amount = parseAmount(testCase.amount);
+    const base = {
+      txnId: `SIM-${testCase.id}-${Date.now()}`,
+      fromAccount: `SIM-${testCase.id}-SRC`,
+      toAccount: `SIM-${testCase.id}-DST`,
+      amount,
+      customerId: `SIM-CUST-${testCase.id}`,
+      deviceId: `SIM-DEV-${testCase.id}`,
+      description: `${testCase.fraudType} simulation ${testCase.id}`,
+      isDormant: false,
+      deviceAccountCount: 1,
+      velocity1h: 1,
+      velocity24h: 2,
+      channel: "IMPS",
+    };
+
+    if (testCase.fraudType === "Rapid Layering") {
+      return { ...base, channel: "UPI", velocity1h: 6, velocity24h: 14, deviceAccountCount: 4 };
+    }
+    if (testCase.fraudType === "Round-Tripping") {
+      return { ...base, channel: "IMPS", velocity1h: 5, velocity24h: 10, description: `${base.description} ROUND_TRIP` };
+    }
+    if (testCase.fraudType === "Structuring") {
+      return { ...base, channel: "CASH", amount: Math.min(amount, 980000), velocity1h: 4, velocity24h: 12 };
+    }
+    if (testCase.fraudType === "Dormant Activation") {
+      return { ...base, channel: "RTGS", isDormant: true, velocity1h: 3, velocity24h: 5 };
+    }
+    if (testCase.fraudType === "Profile Mismatch") {
+      return { ...base, channel: "NEFT", velocity1h: 4, velocity24h: 8, deviceAccountCount: 2 };
+    }
+    if (testCase.fraudType === "Mule Account") {
+      return { ...base, channel: "SWIFT", velocity1h: 5, velocity24h: 11, deviceAccountCount: 5 };
+    }
+
+    return base;
+  };
+
+  const runSimulation = async (testCase: any) => {
+    setRunningCaseId(testCase.id);
+    try {
+      const payload = buildSimulationPayload(testCase);
+      const response = await ingestTransaction(payload);
+      if (response.alert_id) {
+        toast.success(`${testCase.id} generated live alert ${response.alert_id}`);
+        navigate(`/graph?alert=${response.alert_id}`);
+      } else {
+        toast.info(`${testCase.id} ingested without alert (risk ${response.risk_score})`);
+        navigate("/transactions");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Simulation failed");
+    } finally {
+      setRunningCaseId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-foreground">Test Cases & Fraud Simulations</h1>
-      <p className="text-sm text-muted-foreground">30 built-in test cases across 6 fraud typologies.</p>
+      <p className="text-sm text-muted-foreground">30 built-in test cases across 6 fraud typologies. Run Simulation sends a real ingest request to backend.</p>
 
       {testCaseSections.map((section) => (
         <div key={section.title} className="space-y-3">
@@ -57,12 +122,11 @@ export default function TestCasesPage() {
                       size="sm"
                       className="flex-1 text-xs h-8 bg-primary hover:bg-primary/90 text-primary-foreground"
                       onClick={() => {
-                        const graphType = mapFraudTypeToGraph(tc.fraudType);
-                        navigate(`/graph?alert=AL-001&type=${encodeURIComponent(graphType)}`);
-                        toast.info(`Running ${tc.id}...`);
+                        void runSimulation(tc);
                       }}
+                      disabled={runningCaseId === tc.id}
                     >
-                      <Play className="mr-1 h-3 w-3" /> Run Simulation
+                      <Play className="mr-1 h-3 w-3" /> {runningCaseId === tc.id ? "Running..." : "Run Simulation"}
                     </Button>
                     <Button
                       size="sm"

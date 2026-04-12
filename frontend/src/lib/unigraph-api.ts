@@ -47,8 +47,120 @@ export interface ListResponse<T> {
   page_size: number;
 }
 
+export interface InvestigationResponse {
+  alert: BackendAlert;
+  transaction?: BackendTransaction;
+  graph: {
+    nodes: Array<Record<string, unknown>>;
+    edges: Array<Record<string, unknown>>;
+  };
+  investigation_note: string;
+}
+
+export interface STRReport {
+  id: string;
+  alert_id: string;
+  account_id: string;
+  risk_score: number;
+  narrative: string;
+  status: string;
+  reference_id?: string | null;
+  created_at?: string;
+  submitted_at?: string | null;
+}
+
+export interface STRGenerateResponse {
+  str_id: string;
+  narrative: string;
+  status: string;
+  alert_id: string;
+  account_id: string;
+  risk_score: number;
+}
+
+export interface STRSubmitResponse {
+  str_id: string;
+  status: string;
+  reference_id: string;
+  provider_response?: Record<string, unknown>;
+}
+
+export interface IngestTransactionRequest {
+  txnId?: string;
+  fromAccount: string;
+  toAccount: string;
+  amount: number;
+  channel?: string;
+  customerId?: string;
+  description?: string;
+  deviceId?: string;
+  isDormant?: boolean;
+  deviceAccountCount?: number;
+  velocity1h?: number;
+  velocity24h?: number;
+}
+
+export interface IngestTransactionResponse {
+  txn_id: string;
+  from_account: string;
+  to_account: string;
+  amount: number;
+  channel: string;
+  timestamp: string;
+  risk_score: number;
+  risk_level: string;
+  recommendation: string;
+  rule_violations: string[];
+  is_flagged: boolean;
+  alert_id?: string | null;
+}
+
+export interface BackendHealthResponse {
+  status: string;
+  version: string;
+  neo4j: string;
+  graph_stats?: {
+    total_accounts?: number;
+    total_transactions?: number;
+    total_alerts?: number;
+    flagged_accounts?: number;
+  };
+  demo_mode?: boolean;
+}
+
+export interface GraphAnalyticsStatusResponse {
+  status: string;
+  gds: {
+    total_accounts: number;
+    with_pagerank: number;
+    with_community: number;
+    with_betweenness: number;
+    max_pagerank: number;
+    distinct_communities: number;
+    top_accounts: Array<{
+      account_id: string;
+      pagerank: number;
+      community_id: number;
+      betweenness_centrality: number;
+      risk_score: number;
+    }>;
+  };
+  patterns?: Record<string, unknown>;
+  algorithms: string[];
+}
+
+export interface MlHealthResponse {
+  status: string;
+  model_version?: string;
+  gnn_loaded?: boolean;
+  if_loaded?: boolean;
+  xgb_loaded?: boolean;
+  fallback_ready?: boolean;
+}
+
 const API_BASE = (import.meta.env.VITE_BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 const API_PREFIX = `${API_BASE}/api/v1`;
+const ML_BASE = (import.meta.env.VITE_ML_SERVICE_URL || "http://localhost:8002").replace(/\/$/, "");
 
 function toQuery(params: Record<string, string | number | undefined>) {
   const query = new URLSearchParams();
@@ -60,8 +172,36 @@ function toQuery(params: Record<string, string | number | undefined>) {
   return query.toString();
 }
 
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers || {});
+  if (init?.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const response = await fetch(`${API_PREFIX}${path}`, {
+    ...init,
+    headers,
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`API ${response.status}: ${body}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    return {} as T;
+  }
+
+  return (await response.json()) as T;
+}
+
 async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_PREFIX}${path}`);
+  return requestJson<T>(path);
+}
+
+async function fetchAbsoluteJson<T>(url: string): Promise<T> {
+  const response = await fetch(url);
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`API ${response.status}: ${body}`);
@@ -189,6 +329,87 @@ export async function listAlerts(params?: {
     min_risk_score: params?.minRiskScore,
   });
   return fetchJson<ListResponse<BackendAlert>>(`/alerts?${query}`);
+}
+
+export async function getAlert(alertId: string) {
+  return fetchJson<BackendAlert>(`/alerts/${encodeURIComponent(alertId)}`);
+}
+
+export async function investigateAlert(alertId: string, hops = 2) {
+  const query = toQuery({ hops });
+  return fetchJson<InvestigationResponse>(`/alerts/${encodeURIComponent(alertId)}/investigate?${query}`);
+}
+
+export async function listStrReports(params?: {
+  page?: number;
+  pageSize?: number;
+  status?: string;
+  accountId?: string;
+}) {
+  const query = toQuery({
+    page: params?.page || 1,
+    page_size: params?.pageSize || 50,
+    status: params?.status,
+    account_id: params?.accountId,
+  });
+  return fetchJson<ListResponse<STRReport>>(`/reports/str?${query}`);
+}
+
+export async function generateStrReport(alertId: string, caseNotes = "") {
+  return requestJson<STRGenerateResponse>("/reports/str/generate", {
+    method: "POST",
+    body: JSON.stringify({
+      alert_id: alertId,
+      case_notes: caseNotes,
+    }),
+  });
+}
+
+export async function submitStrReport(params: {
+  strId: string;
+  editedNarrative: string;
+  digitalSignature: string;
+}) {
+  return requestJson<STRSubmitResponse>(`/reports/str/${encodeURIComponent(params.strId)}/submit`, {
+    method: "POST",
+    body: JSON.stringify({
+      str_id: params.strId,
+      edited_narrative: params.editedNarrative,
+      digital_signature: params.digitalSignature,
+    }),
+  });
+}
+
+export async function ingestTransaction(payload: IngestTransactionRequest) {
+  return requestJson<IngestTransactionResponse>("/transactions/ingest", {
+    method: "POST",
+    body: JSON.stringify({
+      txn_id: payload.txnId,
+      from_account: payload.fromAccount,
+      to_account: payload.toAccount,
+      amount: payload.amount,
+      channel: payload.channel || "IMPS",
+      customer_id: payload.customerId,
+      description: payload.description || "Simulation",
+      device_id: payload.deviceId,
+      is_dormant: payload.isDormant || false,
+      device_account_count: payload.deviceAccountCount || 1,
+      velocity_1h: payload.velocity1h || 0,
+      velocity_24h: payload.velocity24h || 0,
+    }),
+  });
+}
+
+export async function getBackendHealth() {
+  return fetchAbsoluteJson<BackendHealthResponse>(`${API_BASE}/health`);
+}
+
+export async function getGraphAnalyticsStatus() {
+  return fetchJson<GraphAnalyticsStatusResponse>("/graph-analytics/status");
+}
+
+export async function getMlHealth() {
+  return fetchAbsoluteJson<MlHealthResponse>(`${ML_BASE}/api/v1/ml/health`);
 }
 
 export function connectAlertsWebSocket(
