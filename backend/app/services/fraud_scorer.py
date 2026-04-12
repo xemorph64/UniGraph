@@ -12,6 +12,7 @@ from datetime import timezone
 from typing import Optional
 import structlog
 from .neo4j_service import neo4j_service
+from .rule_evaluator import rule_evaluator
 from ..config import settings
 
 logger = structlog.get_logger()
@@ -57,6 +58,99 @@ class FraudScorer:
     def __init__(self):
         self._ml_score_url = f"{settings.ML_SERVICE_URL.rstrip('/')}/api/v1/ml/score"
         self._ml_health_url = f"{settings.ML_SERVICE_URL.rstrip('/')}/api/v1/ml/health"
+
+    @staticmethod
+    def _base_graph_features(txn: dict) -> dict:
+        return {
+            "connected_suspicious_nodes": int(txn.get("connected_suspicious_nodes", 0)),
+            "community_risk_score": float(txn.get("community_risk_score", 0.0)),
+            "community_id": int(txn.get("community_id", 0)),
+            "pagerank": float(txn.get("pagerank", 0.0)),
+            "betweenness_centrality": float(txn.get("betweenness_centrality", 0.0)),
+        }
+
+    async def _build_graph_features(self, txn: dict) -> dict:
+        graph_features = self._base_graph_features(txn)
+        from_account = txn.get("from_account", "")
+
+        if not from_account:
+            return graph_features
+
+        try:
+            extracted = await neo4j_service.get_scoring_graph_features(from_account)
+            graph_features.update(extracted)
+        except Exception as exc:
+            logger.warning(
+                "graph_feature_extraction_failed",
+                account_id=from_account,
+                error=str(exc),
+            )
+
+        return graph_features
+
+    @staticmethod
+    def _blend_ml_with_rules(
+        ml_result: dict,
+        rule_based_score: int,
+        rule_violations: list[str],
+        shap_contributions: list[str],
+    ) -> dict:
+        ml_score = max(0, min(100, int(round(float(ml_result.get("xgboost_risk_score", 0))))))
+
+        # Blend learned score with deterministic rule signals to preserve typology explainability.
+        risk_score = min(100, round(ml_score * 0.8 + rule_based_score * 0.2))
+
+        # If deterministic rules already indicate an alert-worthy pattern,
+        # preserve that floor even when ML predicts lower risk.
+        if rule_violations and rule_based_score >= 60:
+            risk_score = max(risk_score, rule_based_score)
+
+        return {
+            "risk_score": risk_score,
+            "gnn_fraud_probability": float(
+                ml_result.get("gnn_fraud_probability", min(risk_score / 100, 1.0))
+            ),
+            "if_anomaly_score": float(
+                ml_result.get("if_anomaly_score", min(risk_score / 120, 1.0))
+            ),
+            "xgboost_risk_score": ml_score,
+            "shap_top3": list(ml_result.get("shap_top3") or shap_contributions[:3]),
+            "model_version": str(ml_result.get("model_version", "ml-service-unknown")),
+            "scoring_timestamp": str(
+                ml_result.get(
+                    "timestamp",
+                    datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                )
+            ),
+        }
+
+    @staticmethod
+    def _fallback_rule_only(
+        rule_based_score: int,
+        shap_contributions: list[str],
+    ) -> dict:
+        risk_score = rule_based_score
+        return {
+            "risk_score": risk_score,
+            "gnn_fraud_probability": min(risk_score / 100, 1.0),
+            "if_anomaly_score": min(risk_score / 120, 1.0),
+            "xgboost_risk_score": risk_score,
+            "shap_top3": shap_contributions[:3],
+            "model_version": "unigraph-demo-v1.0",
+            "scoring_timestamp": datetime.now(timezone.utc).isoformat().replace(
+                "+00:00", "Z"
+            ),
+        }
+
+    @staticmethod
+    def _risk_level_and_recommendation(risk_score: int) -> tuple[str, str]:
+        if risk_score >= 90:
+            return "CRITICAL", "BLOCK"
+        if risk_score >= 80:
+            return "HIGH", "HOLD"
+        if risk_score >= 60:
+            return "MEDIUM", "REVIEW"
+        return "LOW", "ALLOW"
 
     async def _score_with_ml_service(self, txn: dict, rule_violations: list[str]) -> Optional[dict]:
         payload = {
@@ -122,130 +216,32 @@ class FraudScorer:
         Score a transaction using rule-based heuristics + ML signals.
         Returns: {risk_score, risk_level, recommendation, rule_violations, shap_top3}
         """
-        risk_score = 0.0
-        rule_violations = []
-        shap_contributions = []
-
-        amount = txn.get("amount", 0)
-        channel = txn.get("channel", "IMPS")
-        from_account = txn.get("from_account", "")
-        to_account = txn.get("to_account", "")
-        description = str(txn.get("description", "")).upper()
-        is_dormant = txn.get("is_dormant", False)
-        device_account_count = txn.get("device_account_count", 1)
-        velocity_1h = txn.get("velocity_1h", 0)
-        velocity_24h = txn.get("velocity_24h", 0)
-        round_trip_marker = "ROUND_TRIP" in description
-
-        if amount > 500000:
-            risk_score += 20
-            shap_contributions.append(f"high_amount_₹{amount / 100000:.1f}L: +20")
-        elif amount > 100000:
-            risk_score += 10
-            shap_contributions.append(f"elevated_amount_₹{amount / 100000:.1f}L: +10")
-
-        if velocity_1h >= 5:
-            risk_score += 25
-            rule_violations.append("RAPID_LAYERING")
-            shap_contributions.append(f"velocity_1h_{velocity_1h}_txns: +25")
-        elif velocity_1h >= 3:
-            risk_score += 12
-            shap_contributions.append(f"elevated_velocity_1h_{velocity_1h}: +12")
-
-        # High-value funds moving through accounts with bursty activity is a strong
-        # layering signal in live transaction streams.
-        if amount >= 500000 and velocity_1h >= 2 and not is_dormant:
-            risk_score += 40
-            if "RAPID_LAYERING" not in rule_violations:
-                rule_violations.append("RAPID_LAYERING")
-            shap_contributions.append(
-                f"high_value_multi_hop_velocity_1h_{velocity_1h}: +40"
-            )
-
-        if 800000 <= amount <= 990000:
-            risk_score += 22
-            rule_violations.append("STRUCTURING")
-            shap_contributions.append("amount_near_ctr_threshold: +22")
-
-        # Smurfing/structuring signal for repeated sub-threshold credits in a day.
-        if 40000 <= amount < 50000 and velocity_24h >= 3:
-            structuring_boost = min(65, 24 + max(0, velocity_24h - 3) * 9)
-            risk_score += structuring_boost
-            if "STRUCTURING" not in rule_violations:
-                rule_violations.append("STRUCTURING")
-            shap_contributions.append(
-                f"repeated_sub_threshold_transfers_{velocity_24h}_in_24h: +{structuring_boost}"
-            )
-
-        if is_dormant:
-            risk_score += 45
-            rule_violations.append("DORMANT_AWAKENING")
-            shap_contributions.append("dormant_account_activity: +45")
-
-        if device_account_count > 3:
-            risk_score += 30
-            rule_violations.append("MULE_NETWORK")
-            shap_contributions.append(
-                f"device_shared_{device_account_count}_accounts: +30"
-            )
-
-        if channel in ["CASH", "SWIFT"]:
-            risk_score += 8
-            shap_contributions.append(f"high_risk_channel_{channel}: +8")
-
-        # Round-tripping indicator used in synthetic and replay tests.
-        if (from_account and to_account and from_account == to_account) or round_trip_marker:
-            risk_score += 35
-            if "ROUND_TRIPPING" not in rule_violations:
-                rule_violations.append("ROUND_TRIPPING")
-            shap_contributions.append("round_tripping_pattern: +35")
-            if amount >= 250000:
-                risk_score += 15
-                shap_contributions.append("high_value_round_trip: +15")
-
-        if velocity_24h >= 10:
-            risk_score += 15
-            shap_contributions.append(f"velocity_24h_{velocity_24h}_txns: +15")
+        rule_eval = rule_evaluator.evaluate(txn)
+        risk_score = rule_eval.risk_score
+        rule_violations = list(rule_eval.rule_violations)
+        shap_contributions = list(rule_eval.shap_contributions)
 
         rule_based_score = min(round(risk_score), 100)
-
-        graph_features = {
-            "connected_suspicious_nodes": int(txn.get("connected_suspicious_nodes", 0)),
-            "community_risk_score": float(txn.get("community_risk_score", 0.0)),
-            "community_id": int(txn.get("community_id", 0)),
-            "pagerank": float(txn.get("pagerank", 0.0)),
-            "betweenness_centrality": float(txn.get("betweenness_centrality", 0.0)),
-        }
-
-        if from_account:
-            try:
-                extracted = await neo4j_service.get_scoring_graph_features(from_account)
-                graph_features.update(extracted)
-            except Exception as exc:
-                logger.warning(
-                    "graph_feature_extraction_failed",
-                    account_id=from_account,
-                    error=str(exc),
-                )
+        graph_features = await self._build_graph_features(txn)
 
         txn_for_ml = dict(txn)
         txn_for_ml.update(graph_features)
 
         ml_result = await self._score_with_ml_service(txn_for_ml, rule_violations)
         if ml_result:
-            ml_score = max(0, min(100, int(round(float(ml_result.get("xgboost_risk_score", 0))))))
-            # Blend learned score with deterministic rule signals to preserve typology explainability.
-            risk_score = min(100, round(ml_score * 0.8 + rule_based_score * 0.2))
-            # If deterministic rules already indicate an alert-worthy pattern,
-            # preserve that floor even when ML predicts lower risk.
-            if rule_violations and rule_based_score >= 60:
-                risk_score = max(risk_score, rule_based_score)
-            gnn_fraud_probability = float(ml_result.get("gnn_fraud_probability", min(risk_score / 100, 1.0)))
-            if_anomaly_score = float(ml_result.get("if_anomaly_score", min(risk_score / 120, 1.0)))
-            xgboost_risk_score = ml_score
-            shap_top3 = list(ml_result.get("shap_top3") or shap_contributions[:3])
-            model_version = str(ml_result.get("model_version", "ml-service-unknown"))
-            scoring_timestamp = str(ml_result.get("timestamp", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")))
+            blended = self._blend_ml_with_rules(
+                ml_result=ml_result,
+                rule_based_score=rule_based_score,
+                rule_violations=rule_violations,
+                shap_contributions=shap_contributions,
+            )
+            risk_score = blended["risk_score"]
+            gnn_fraud_probability = blended["gnn_fraud_probability"]
+            if_anomaly_score = blended["if_anomaly_score"]
+            xgboost_risk_score = blended["xgboost_risk_score"]
+            shap_top3 = blended["shap_top3"]
+            model_version = blended["model_version"]
+            scoring_timestamp = blended["scoring_timestamp"]
             logger.info(
                 "ml_service_score_applied",
                 txn_id=txn.get("txn_id"),
@@ -256,26 +252,19 @@ class FraudScorer:
                 community_risk_score=graph_features.get("community_risk_score", 0.0),
             )
         else:
-            risk_score = rule_based_score
-            gnn_fraud_probability = min(risk_score / 100, 1.0)
-            if_anomaly_score = min(risk_score / 120, 1.0)
-            xgboost_risk_score = risk_score
-            shap_top3 = shap_contributions[:3]
-            model_version = "unigraph-demo-v1.0"
-            scoring_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            fallback = self._fallback_rule_only(
+                rule_based_score=rule_based_score,
+                shap_contributions=shap_contributions,
+            )
+            risk_score = fallback["risk_score"]
+            gnn_fraud_probability = fallback["gnn_fraud_probability"]
+            if_anomaly_score = fallback["if_anomaly_score"]
+            xgboost_risk_score = fallback["xgboost_risk_score"]
+            shap_top3 = fallback["shap_top3"]
+            model_version = fallback["model_version"]
+            scoring_timestamp = fallback["scoring_timestamp"]
 
-        if risk_score >= 90:
-            risk_level = "CRITICAL"
-            recommendation = "BLOCK"
-        elif risk_score >= 80:
-            risk_level = "HIGH"
-            recommendation = "HOLD"
-        elif risk_score >= 60:
-            risk_level = "MEDIUM"
-            recommendation = "REVIEW"
-        else:
-            risk_level = "LOW"
-            recommendation = "ALLOW"
+        risk_level, recommendation = self._risk_level_and_recommendation(risk_score)
 
         primary_fraud_type = self._select_primary_fraud_type(rule_violations)
 

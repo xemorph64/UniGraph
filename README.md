@@ -35,7 +35,7 @@ An end-to-end, graph-native fund flow tracking platform designed as a pluggable 
 | Graph DB | Neo4j Enterprise 5.x |
 | Time-Series | Apache Cassandra 4.x |
 | Cache | Redis 7.x |
-| Rule Engine | Apache Drools 9.x |
+| Rule Engine | Python rule evaluator (`backend/app/services/rule_evaluator.py`) |
 | ML | FastAPI ML scoring service + fallback models; GraphSAGE/XGBoost/IF when artifacts exist |
 | LLM | Configurable provider (Groq default, on-prem compatible) |
 | Infra | Docker Compose (dev) + Kubernetes (prod) |

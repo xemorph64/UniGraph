@@ -24,6 +24,7 @@ if_model = None
 xgb_model = None
 shap_explainer = None
 feature_engineer = None
+if_scaler = None
 
 fallback_ready = False
 fallback_version = "fallback-linear-v1"
@@ -446,6 +447,31 @@ def _sigmoid(arr: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-arr))
 
 
+def _align_xgb_features(features: np.ndarray) -> np.ndarray:
+    """Align feature width to trained XGBoost expectation.
+
+    Some legacy artifacts were trained with 39 features while newer runtime
+    paths build a 26-feature vector. To preserve compatibility, we pad/truncate
+    to the trained model width when available.
+    """
+    if xgb_model is None or not hasattr(xgb_model, "model"):
+        return features
+
+    expected = getattr(xgb_model.model, "n_features_in_", None)
+    if expected is None:
+        return features
+
+    expected = int(expected)
+    current = int(features.shape[1])
+
+    if current == expected:
+        return features
+    if current < expected:
+        padding = np.zeros((features.shape[0], expected - current), dtype=features.dtype)
+        return np.hstack([features, padding])
+    return features[:, :expected]
+
+
 def _train_fallback_models() -> None:
     global fallback_ready, fraud_coef, risk_coef, feature_mean, feature_std, model_version
     data_source = _repo_root() / "fraud_scenarios.sql"
@@ -487,24 +513,30 @@ class MLScoringResponse(BaseModel):
 
 
 async def load_models(model_dir: str = "/models"):
-    global gnn_model, if_model, xgb_model, shap_explainer, feature_engineer
+    global gnn_model, if_model, xgb_model, shap_explainer, feature_engineer, if_scaler
 
     try:
         import torch
         from ml.models.graphsage.model import GraphSAGEFraudDetector
 
         gnn_path = os.path.join(model_dir, "graphsage_model.pt")
+        if not os.path.exists(gnn_path):
+            alt_gnn_path = os.path.join(model_dir, "graphsage.pt")
+            if os.path.exists(alt_gnn_path):
+                gnn_path = alt_gnn_path
         if os.path.exists(gnn_path):
             checkpoint = torch.load(gnn_path, map_location="cpu")
-            gnn_model = GraphSAGEFraudDetector(
+            loaded_gnn_model = GraphSAGEFraudDetector(
                 in_features=checkpoint.get("config", {}).get("in_features", 32),
                 hidden_dim=checkpoint.get("config", {}).get("hidden_dim", 128),
                 out_features=checkpoint.get("config", {}).get("out_features", 64),
             )
-            gnn_model.load_state_dict(checkpoint["model_state_dict"])
-            gnn_model.eval()
+            loaded_gnn_model.load_state_dict(checkpoint["model_state_dict"])
+            loaded_gnn_model.eval()
+            gnn_model = loaded_gnn_model
             print("Loaded GraphSAGE model")
     except Exception as e:
+        gnn_model = None
         print(f"Could not load GNN model: {e}")
 
     try:
@@ -515,7 +547,23 @@ async def load_models(model_dir: str = "/models"):
             import pickle
 
             with open(if_path, "rb") as f:
-                if_model = pickle.load(f)
+                payload = pickle.load(f)
+
+            # Support both direct model pickles and dict-wrapped training artifacts.
+            if isinstance(payload, dict):
+                if_model = payload.get("model")
+                if_scaler = payload.get("scaler")
+            else:
+                if hasattr(payload, "score_to_0_100"):
+                    if_model = payload
+                elif hasattr(payload, "score_samples"):
+                    # Wrap raw sklearn IsolationForest into project adapter.
+                    wrapped_if = IsolationForestDetector()
+                    wrapped_if.model = payload
+                    if_model = wrapped_if
+                else:
+                    if_model = payload
+                if_scaler = None
             print("Loaded Isolation Forest model")
     except Exception as e:
         print(f"Could not load IF model: {e}")
@@ -529,9 +577,27 @@ async def load_models(model_dir: str = "/models"):
             import pickle
 
             with open(xgb_path, "rb") as f:
-                xgb_model = pickle.load(f)
+                payload = pickle.load(f)
+
+            # Support both direct model pickles and dict-wrapped training artifacts.
+            if isinstance(payload, dict):
+                xgb_model = payload.get("model")
+                if shap_explainer is None:
+                    shap_explainer = payload.get("shap_explainer")
+            else:
+                if hasattr(payload, "prepare_features") and hasattr(payload, "predict_risk_score"):
+                    xgb_model = payload
+                elif hasattr(payload, "predict_proba"):
+                    # Wrap raw xgboost classifier into project adapter.
+                    wrapped_xgb = XGBoostEnsembleScorer()
+                    wrapped_xgb.model = payload
+                    xgb_model = wrapped_xgb
+                else:
+                    xgb_model = payload
+
             try:
-                shap_explainer = SHAPExplainer(xgb_model.model)
+                if shap_explainer is None and hasattr(xgb_model, "model"):
+                    shap_explainer = SHAPExplainer(xgb_model.model)
             except:
                 pass
             print("Loaded XGBoost model")
@@ -546,7 +612,8 @@ async def load_models(model_dir: str = "/models"):
     except Exception as e:
         print(f"Could not load Feature Engineer: {e}")
 
-    if gnn_model is None or if_model is None or xgb_model is None:
+    # Graph model is optional at runtime; keep fallback for missing tabular models.
+    if if_model is None or xgb_model is None:
         try:
             _train_fallback_models()
         except Exception as e:
@@ -576,7 +643,10 @@ async def score_transaction(
     if if_model is not None:
         try:
             tx_features = extract_tx_features(enriched_txn)
-            if_scores = if_model.score_samples(np.array([tx_features]))
+            tx_array = np.array([tx_features], dtype=np.float64)
+            if if_scaler is not None:
+                tx_array = if_scaler.transform(tx_array)
+            if_scores = if_model.score_samples(tx_array)
             if_score = if_model.score_to_0_100(np.array([if_scores[0]]))[0] / 100.0
         except Exception as e:
             print(f"IF scoring error: {e}")
@@ -612,6 +682,7 @@ async def score_transaction(
                 default_acct,
                 rule_violations,
             )
+            xgb_features = _align_xgb_features(xgb_features)
             risk_score = xgb_model.predict_risk_score(xgb_features)
         except Exception as e:
             print(f"XGBoost scoring error: {e}")
@@ -642,6 +713,7 @@ async def score_transaction(
                 default_acct,
                 rule_violations,
             )
+            xgb_features = _align_xgb_features(xgb_features)
             shap_result = shap_explainer.explain(xgb_features)
             shap_top3 = shap_result.get("shap_top3", [])
         except Exception as e:

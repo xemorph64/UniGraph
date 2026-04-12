@@ -74,6 +74,9 @@ mlartifacts/
 *.onnx
 *.gguf
 models/
+ml/models_colab_import/
+ml/models/*.pkl
+ml/models/graphsage-v1/
 data/*.csv
 data/*.parquet
 

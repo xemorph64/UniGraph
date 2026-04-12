@@ -236,6 +236,8 @@ services:
     container_name: ml-service
     environment:
       MODEL_DIR: /models
+    volumes:
+      - ${ML_MODEL_DIR:-../ml/models_colab_import}:/models:ro
     ports:
       - "8002:8002"
     healthcheck:
