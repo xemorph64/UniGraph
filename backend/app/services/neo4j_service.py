@@ -241,6 +241,10 @@ class Neo4jService:
             "community_id": 0,
             "pagerank": 0.0,
             "betweenness_centrality": 0.0,
+            "in_degree_24h": 0,
+            "out_degree_24h": 0,
+            "shortest_path_to_fraud": 0.0,
+            "neighbor_fraud_ratio": 0.0,
         }
 
         if not account_id:
@@ -250,22 +254,47 @@ class Neo4jService:
             result = await session.run(
                 """
                 MATCH (a:Account {id: $account_id})
+                                OPTIONAL MATCH (a)-[o:SENT]->(:Account)
+                WHERE datetime(toString(o.timestamp)) >= datetime() - duration({hours: 24})
+                                WITH a, count(o) AS out_degree_24h
+                                OPTIONAL MATCH (:Account)-[i:SENT]->(a)
+                WHERE datetime(toString(i.timestamp)) >= datetime() - duration({hours: 24})
+                                WITH a, out_degree_24h, count(i) AS in_degree_24h
                 OPTIONAL MATCH (a)-[:SENT*1..2]-(n:Account)
-                WITH a, collect(DISTINCT n) AS neighbors
+                                WITH a, in_degree_24h, out_degree_24h, collect(DISTINCT n) AS neighbors
                 WITH
                   a,
+                                    in_degree_24h,
+                                    out_degree_24h,
                   neighbors,
                   size([n IN neighbors WHERE coalesce(n.risk_score, 0.0) >= 60.0]) AS connected_suspicious_nodes,
+                                    CASE size(neighbors)
+                                        WHEN 0 THEN 0.0
+                                        ELSE toFloat(size([n IN neighbors WHERE coalesce(n.risk_score, 0.0) >= 60.0])) / toFloat(size(neighbors))
+                                    END AS neighbor_fraud_ratio,
                   CASE size(neighbors)
                     WHEN 0 THEN 0.0
                     ELSE reduce(total = 0.0, n IN neighbors | total + coalesce(n.risk_score, 0.0)) / toFloat(size(neighbors))
                   END AS neighbor_avg_risk
+                                OPTIONAL MATCH p = (a)-[:SENT*1..6]-(f:Account)
+                                WHERE f.id <> a.id AND coalesce(f.risk_score, 0.0) >= 60.0
+                                WITH a,
+                                         in_degree_24h,
+                                         out_degree_24h,
+                                         connected_suspicious_nodes,
+                                         neighbor_fraud_ratio,
+                                         neighbor_avg_risk,
+                                         min(length(p)) AS min_path_len
                 RETURN
                   connected_suspicious_nodes,
                   coalesce(a.community_id, 0) AS community_id,
                   coalesce(a.pagerank, 0.0) AS pagerank,
                   coalesce(a.betweenness_centrality, 0.0) AS betweenness_centrality,
-                  neighbor_avg_risk
+                                    neighbor_avg_risk,
+                                    in_degree_24h,
+                                    out_degree_24h,
+                                    coalesce(toFloat(min_path_len), 0.0) AS shortest_path_to_fraud,
+                                    neighbor_fraud_ratio
                 """,
                 account_id=account_id,
             )
@@ -284,6 +313,12 @@ class Neo4jService:
                 "betweenness_centrality": float(
                     record["betweenness_centrality"] or 0.0
                 ),
+                "in_degree_24h": int(record["in_degree_24h"] or 0),
+                "out_degree_24h": int(record["out_degree_24h"] or 0),
+                "shortest_path_to_fraud": float(
+                    record["shortest_path_to_fraud"] or 0.0
+                ),
+                "neighbor_fraud_ratio": float(record["neighbor_fraud_ratio"] or 0.0),
             }
 
     async def create_alert(self, alert: dict) -> dict:
@@ -395,7 +430,9 @@ class Neo4jService:
             "skip": (page - 1) * page_size,
         }
         if account_id:
-            filters.append("(t.from_account = $account_id OR t.to_account = $account_id)")
+            filters.append(
+                "(t.from_account = $account_id OR t.to_account = $account_id)"
+            )
             params["account_id"] = account_id
         if channel:
             filters.append("t.channel = $channel")
@@ -898,7 +935,9 @@ class Neo4jService:
             record = await result.single()
             return self._serialize_temporals(dict(record["ae"])) if record else {}
 
-    async def get_account_timeline_from_graph(self, account_id: str, days: int = 30) -> list[dict]:
+    async def get_account_timeline_from_graph(
+        self, account_id: str, days: int = 30
+    ) -> list[dict]:
         async with self.driver.session() as session:
             result = await session.run(
                 """
@@ -937,15 +976,22 @@ class Neo4jService:
     async def get_graph_stats(self) -> dict:
         async with self.driver.session() as session:
             result = await session.run("""
-                MATCH (a:Account) WITH count(a) as accounts
-                MATCH (t:Transaction) WITH accounts, count(t) as transactions
-                MATCH (al:Alert) WITH accounts, transactions, count(al) as alerts
-                MATCH (al:Alert {status: 'OPEN'}) WITH accounts, transactions, alerts, count(al) as open_alerts
-                RETURN accounts, transactions, alerts, open_alerts
+                MATCH (a:Account)
+                OPTIONAL MATCH (a)-[r:SENT]->()
+                OPTIONAL MATCH (a)-[:HAS_ALERT]->(al:Alert)
+                RETURN 
+                    count(DISTINCT a) as total_accounts,
+                    count(DISTINCT r) as total_transactions,
+                    count(DISTINCT al) as total_alerts
             """)
             record = await result.single()
             if record:
-                return dict(record)
+                return {
+                    "accounts": int(record.get("total_accounts", 0) or 0),
+                    "transactions": int(record.get("total_transactions", 0) or 0),
+                    "alerts": int(record.get("total_alerts", 0) or 0),
+                    "open_alerts": int(record.get("total_alerts", 0) or 0),
+                }
             return {"accounts": 0, "transactions": 0, "alerts": 0, "open_alerts": 0}
 
     async def find_fraud_patterns(self) -> list[dict]:
@@ -1064,7 +1110,9 @@ class Neo4jService:
                 "graph": {
                     "name": project["graphName"] if project else self._gds_graph_name,
                     "node_count": int(project["nodeCount"] if project else 0),
-                    "relationship_count": int(project["relationshipCount"] if project else 0),
+                    "relationship_count": int(
+                        project["relationshipCount"] if project else 0
+                    ),
                 },
                 "pagerank": {
                     "node_properties_written": int(
@@ -1120,7 +1168,9 @@ class Neo4jService:
                         "account_id": record["account_id"],
                         "pagerank": float(record["pagerank"]),
                         "community_id": int(record["community_id"]),
-                        "betweenness_centrality": float(record["betweenness_centrality"]),
+                        "betweenness_centrality": float(
+                            record["betweenness_centrality"]
+                        ),
                         "risk_score": float(record["risk_score"]),
                     }
                 )
@@ -1129,7 +1179,9 @@ class Neo4jService:
                 "total_accounts": int(coverage["total_accounts"] if coverage else 0),
                 "with_pagerank": int(coverage["with_pagerank"] if coverage else 0),
                 "with_community": int(coverage["with_community"] if coverage else 0),
-                "with_betweenness": int(coverage["with_betweenness"] if coverage else 0),
+                "with_betweenness": int(
+                    coverage["with_betweenness"] if coverage else 0
+                ),
                 "max_pagerank": float(coverage["max_pagerank"] if coverage else 0.0),
                 "distinct_communities": int(
                     coverage["distinct_communities"] if coverage else 0
@@ -1166,7 +1218,9 @@ class Neo4jService:
                 """
             )
             anchor = await anchor_result.single()
-            anchor_timestamp = anchor["anchor_ts"] if anchor and anchor["anchor_ts"] else None
+            anchor_timestamp = (
+                anchor["anchor_ts"] if anchor and anchor["anchor_ts"] else None
+            )
 
             rapid_result = await session.run(
                 """
@@ -1368,7 +1422,9 @@ class Neo4jService:
                         "account_id": record["account_id"],
                         "reactivated_at": record["reactivated_at"],
                         "max_recent_amount": float(record["max_recent_amount"] or 0.0),
-                        "total_recent_amount": float(record["total_recent_amount"] or 0.0),
+                        "total_recent_amount": float(
+                            record["total_recent_amount"] or 0.0
+                        ),
                         "prior_txn_count": int(record["prior_txn_count"] or 0),
                     }
                 )
@@ -1437,9 +1493,13 @@ class Neo4jService:
                         "account_id": record["account_id"],
                         "distinct_senders": int(record["distinct_senders"] or 0),
                         "distinct_receivers": int(record["distinct_receivers"] or 0),
-                        "pass_through_amount": float(record["pass_through_amount"] or 0.0),
+                        "pass_through_amount": float(
+                            record["pass_through_amount"] or 0.0
+                        ),
                         "sample_sources": list(record["sample_sources"] or []),
-                        "sample_destinations": list(record["sample_destinations"] or []),
+                        "sample_destinations": list(
+                            record["sample_destinations"] or []
+                        ),
                     }
                 )
 
@@ -1519,10 +1579,14 @@ class Neo4jService:
                     rapid["rapid_layering_accounts"] if rapid else 0
                 ),
                 "max_txn_count_24h": int(
-                    rapid["max_txn_count_window"] if rapid and rapid["max_txn_count_window"] else 0
+                    rapid["max_txn_count_window"]
+                    if rapid and rapid["max_txn_count_window"]
+                    else 0
                 ),
                 "max_amount_24h": float(
-                    rapid["max_amount_window"] if rapid and rapid["max_amount_window"] else 0.0
+                    rapid["max_amount_window"]
+                    if rapid and rapid["max_amount_window"]
+                    else 0.0
                 ),
                 "structuring_edges_7d": int(
                     structuring["structuring_accounts_window"] if structuring else 0

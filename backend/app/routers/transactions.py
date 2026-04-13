@@ -25,6 +25,10 @@ class TransactionResponse(BaseModel):
     primary_fraud_type: Optional[str] = None
     is_flagged: bool
     alert_id: Optional[str] = None
+    gnn_fraud_probability: Optional[float] = None
+    if_anomaly_score: Optional[float] = None
+    xgboost_risk_score: Optional[int] = None
+    model_version: Optional[str] = None
 
 
 class TransactionIngest(BaseModel):
@@ -40,6 +44,28 @@ class TransactionIngest(BaseModel):
     device_account_count: int = 1
     velocity_1h: int = 0
     velocity_24h: int = 0
+    account_age_days: Optional[int] = None
+    kyc_tier: Optional[int] = None
+    transaction_count_30d: Optional[int] = None
+    avg_txn_amount_30d: Optional[float] = None
+    device_count_30d: Optional[int] = None
+    ip_count_30d: Optional[int] = None
+    customer_age: Optional[float] = None
+    avg_monthly_balance: Optional[float] = None
+    avg_txn_amount: Optional[float] = None
+    std_txn_amount: Optional[float] = None
+    max_txn_amount: Optional[float] = None
+    min_txn_amount: Optional[float] = None
+    hour_of_day: Optional[int] = None
+    day_of_week: Optional[int] = None
+    is_weekend: Optional[bool] = None
+    is_holiday: Optional[bool] = None
+    geo_distance_from_home: Optional[float] = None
+    device_risk_flag: Optional[bool] = None
+    counterparty_risk_score: Optional[float] = None
+    is_international: Optional[bool] = None
+    channel_switch_count: Optional[int] = None
+    amount_zscore: Optional[float] = None
 
 
 @router.get("/{txn_id}", response_model=TransactionResponse)
@@ -154,4 +180,8 @@ async def ingest_transaction(txn: TransactionIngest):
         primary_fraud_type=score_result.get("primary_fraud_type"),
         is_flagged=txn_dict["is_flagged"],
         alert_id=alert["id"] if alert else None,
+        gnn_fraud_probability=score_result.get("gnn_fraud_probability"),
+        if_anomaly_score=score_result.get("if_anomaly_score"),
+        xgboost_risk_score=score_result.get("xgboost_risk_score"),
+        model_version=score_result.get("model_version"),
     )

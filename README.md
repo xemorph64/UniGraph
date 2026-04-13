@@ -70,6 +70,20 @@ cd frontend && npm install && npm run dev
 
 Note: Avoid running multiple backend instances on the same port (`8000`). If runtime checks look stale, verify the active process on `:8000` and restart the intended backend process.
 
+## ML Dependency Profile (GPU Default)
+
+- `ml-service` uses `ml/serving/requirements.txt` by default. This keeps GPU-capable dependencies (Torch + XGBoost) enabled.
+- First-time image builds can take several minutes because large CUDA/NCCL wheels are downloaded.
+
+If you want a faster CPU-only local build, switch the requirements profile at build time:
+
+```bash
+ML_SERVING_REQUIREMENTS=requirements.cpu.txt docker compose -f docker/docker-compose.yml build ml-service
+docker compose -f docker/docker-compose.yml up -d ml-service
+```
+
+If `ML_SERVING_REQUIREMENTS` is not set, the default GPU profile is used.
+
 ## Documentation
 
 - **Implementation Plan**: `UniGRAPH_3_Person_Implementation_Plan.md` — Master guide for all 3 developers

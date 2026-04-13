@@ -67,7 +67,31 @@ class FraudScorer:
             "community_id": int(txn.get("community_id", 0)),
             "pagerank": float(txn.get("pagerank", 0.0)),
             "betweenness_centrality": float(txn.get("betweenness_centrality", 0.0)),
+            "in_degree_24h": int(txn.get("in_degree_24h", 0)),
+            "out_degree_24h": int(txn.get("out_degree_24h", 0)),
+            "shortest_path_to_fraud": float(txn.get("shortest_path_to_fraud", 0.0)),
+            "neighbor_fraud_ratio": float(txn.get("neighbor_fraud_ratio", 0.0)),
         }
+
+    @staticmethod
+    def _node_feature_vector(node: dict) -> list[float]:
+        account_type = str(node.get("account_type", "SAVINGS") or "SAVINGS").upper()
+        account_type_score = {
+            "SAVINGS": 0.2,
+            "CURRENT": 0.35,
+            "NRE": 0.5,
+            "OD": 0.45,
+        }.get(account_type, 0.3)
+
+        return [
+            float(node.get("risk_score", 0.0) or 0.0),
+            float(node.get("community_id", 0) or 0),
+            float(node.get("pagerank", 0.0) or 0.0),
+            float(node.get("betweenness_centrality", 0.0) or 0.0),
+            1.0 if bool(node.get("is_dormant", False)) else 0.0,
+            float(node.get("kyc_tier", 1) or 1),
+            account_type_score,
+        ]
 
     async def _build_graph_features(self, txn: dict) -> dict:
         graph_features = self._base_graph_features(txn)
@@ -87,6 +111,92 @@ class FraudScorer:
             )
 
         return graph_features
+
+    async def _build_graph_subgraph(
+        self,
+        txn: dict,
+        *,
+        max_nodes: int = 40,
+        max_edges: int = 120,
+    ) -> Optional[dict]:
+        from_account = str(txn.get("from_account", "") or "")
+        if not from_account:
+            return None
+
+        try:
+            subgraph = await neo4j_service.get_account_subgraph(from_account, hops=2)
+            raw_nodes = subgraph.get("nodes") or []
+            account_nodes = [
+                node
+                for node in raw_nodes
+                if "Account" in (node.get("labels") or []) and node.get("id")
+            ]
+
+            if not account_nodes:
+                return None
+
+            account_nodes = account_nodes[:max_nodes]
+            node_by_id = {str(node.get("id")): node for node in account_nodes}
+            if from_account not in node_by_id:
+                node_by_id[from_account] = {
+                    "id": from_account,
+                    "risk_score": float(txn.get("risk_score", 0.0) or 0.0),
+                    "community_id": int(txn.get("community_id", 0) or 0),
+                    "pagerank": float(txn.get("pagerank", 0.0) or 0.0),
+                    "betweenness_centrality": float(
+                        txn.get("betweenness_centrality", 0.0) or 0.0
+                    ),
+                    "is_dormant": bool(txn.get("is_dormant", False)),
+                    "kyc_tier": int(txn.get("kyc_tier", 1) or 1),
+                    "account_type": "SAVINGS",
+                }
+
+            node_ids = list(node_by_id.keys())[:max_nodes]
+            id_to_idx = {node_id: idx for idx, node_id in enumerate(node_ids)}
+            node_features = [
+                self._node_feature_vector(node_by_id[node_id]) for node_id in node_ids
+            ]
+
+            edge_index: list[list[int]] = []
+            seen_edges: set[tuple[int, int]] = set()
+            for edge in subgraph.get("edges") or []:
+                src = str(edge.get("source", "") or "")
+                dst = str(edge.get("target", "") or "")
+                if src not in id_to_idx or dst not in id_to_idx:
+                    continue
+
+                pair = (id_to_idx[src], id_to_idx[dst])
+                if pair in seen_edges:
+                    continue
+
+                seen_edges.add(pair)
+                edge_index.append([pair[0], pair[1]])
+
+                if len(edge_index) >= max_edges:
+                    break
+
+            center_idx = id_to_idx.get(from_account, 0)
+            if not edge_index and len(node_ids) > 1:
+                for idx in range(len(node_ids)):
+                    if idx == center_idx:
+                        continue
+                    edge_index.append([center_idx, idx])
+                    if len(edge_index) >= max_edges:
+                        break
+
+            return {
+                "node_features": node_features,
+                "edge_index": edge_index,
+                "center_index": center_idx,
+                "node_ids": node_ids,
+            }
+        except Exception as exc:
+            logger.warning(
+                "graph_subgraph_extraction_failed",
+                account_id=from_account,
+                error=str(exc),
+            )
+            return None
 
     @staticmethod
     def _blend_ml_with_rules(
@@ -152,7 +262,13 @@ class FraudScorer:
             return "MEDIUM", "REVIEW"
         return "LOW", "ALLOW"
 
-    async def _score_with_ml_service(self, txn: dict, rule_violations: list[str]) -> Optional[dict]:
+    async def _score_with_ml_service(
+        self,
+        txn: dict,
+        rule_violations: list[str],
+        graph_features: dict,
+        graph_subgraph: Optional[dict] = None,
+    ) -> Optional[dict]:
         payload = {
             "enriched_transaction": {
                 "txn_id": txn.get("txn_id"),
@@ -162,16 +278,63 @@ class FraudScorer:
                 "velocity_24h": int(txn.get("velocity_24h", 0)),
                 "device_account_count": int(txn.get("device_account_count", 1)),
                 "is_dormant": bool(txn.get("is_dormant", False)),
+                "account_age_days": int(txn.get("account_age_days", 0) or 0),
+                "kyc_tier": int(txn.get("kyc_tier", 1) or 1),
+                "transaction_count_30d": int(
+                    txn.get("transaction_count_30d", 0) or 0
+                ),
+                "avg_txn_amount_30d": float(txn.get("avg_txn_amount_30d", 0.0) or 0.0),
+                "device_count_30d": int(txn.get("device_count_30d", 0) or 0),
+                "ip_count_30d": int(txn.get("ip_count_30d", 0) or 0),
+                "customer_age": float(txn.get("customer_age", 0.0) or 0.0),
+                "avg_monthly_balance": float(
+                    txn.get("avg_monthly_balance", 0.0) or 0.0
+                ),
+                "avg_txn_amount": float(txn.get("avg_txn_amount", 0.0) or 0.0),
+                "std_txn_amount": float(txn.get("std_txn_amount", 0.0) or 0.0),
+                "max_txn_amount": float(txn.get("max_txn_amount", 0.0) or 0.0),
+                "min_txn_amount": float(txn.get("min_txn_amount", 0.0) or 0.0),
+                "hour_of_day": int(txn.get("hour_of_day", 0) or 0),
+                "day_of_week": int(txn.get("day_of_week", 0) or 0),
+                "is_weekend": int(bool(txn.get("is_weekend", False))),
+                "is_holiday": int(bool(txn.get("is_holiday", False))),
+                "geo_distance_from_home": float(
+                    txn.get("geo_distance_from_home", 0.0) or 0.0
+                ),
+                "device_risk_flag": int(bool(txn.get("device_risk_flag", False))),
+                "counterparty_risk_score": float(
+                    txn.get("counterparty_risk_score", 0.0) or 0.0
+                ),
+                "is_international": int(bool(txn.get("is_international", False))),
+                "channel_switch_count": int(txn.get("channel_switch_count", 0) or 0),
+                "amount_zscore": float(txn.get("amount_zscore", 0.0) or 0.0),
                 "rule_violations": rule_violations,
             },
             "graph_features": {
-                "connected_suspicious_nodes": int(txn.get("connected_suspicious_nodes", 0)),
-                "community_risk_score": float(txn.get("community_risk_score", 0.0)),
-                "community_id": int(txn.get("community_id", 0)),
-                "pagerank": float(txn.get("pagerank", 0.0)),
-                "betweenness_centrality": float(txn.get("betweenness_centrality", 0.0)),
+                "connected_suspicious_nodes": int(
+                    graph_features.get("connected_suspicious_nodes", 0)
+                ),
+                "community_risk_score": float(
+                    graph_features.get("community_risk_score", 0.0)
+                ),
+                "community_id": int(graph_features.get("community_id", 0)),
+                "pagerank": float(graph_features.get("pagerank", 0.0)),
+                "betweenness_centrality": float(
+                    graph_features.get("betweenness_centrality", 0.0)
+                ),
+                "in_degree_24h": int(graph_features.get("in_degree_24h", 0)),
+                "out_degree_24h": int(graph_features.get("out_degree_24h", 0)),
+                "shortest_path_to_fraud": float(
+                    graph_features.get("shortest_path_to_fraud", 0.0)
+                ),
+                "neighbor_fraud_ratio": float(
+                    graph_features.get("neighbor_fraud_ratio", 0.0)
+                ),
             },
         }
+        if graph_subgraph and graph_subgraph.get("node_features"):
+            payload["graph_subgraph"] = graph_subgraph
+
         try:
             async with httpx.AsyncClient(timeout=4.0) as client:
                 response = await client.post(self._ml_score_url, json=payload)
@@ -222,12 +385,20 @@ class FraudScorer:
         shap_contributions = list(rule_eval.shap_contributions)
 
         rule_based_score = min(round(risk_score), 100)
-        graph_features = await self._build_graph_features(txn)
+        graph_features, graph_subgraph = await asyncio.gather(
+            self._build_graph_features(txn),
+            self._build_graph_subgraph(txn),
+        )
 
         txn_for_ml = dict(txn)
         txn_for_ml.update(graph_features)
 
-        ml_result = await self._score_with_ml_service(txn_for_ml, rule_violations)
+        ml_result = await self._score_with_ml_service(
+            txn_for_ml,
+            rule_violations,
+            graph_features=graph_features,
+            graph_subgraph=graph_subgraph,
+        )
         if ml_result:
             blended = self._blend_ml_with_rules(
                 ml_result=ml_result,

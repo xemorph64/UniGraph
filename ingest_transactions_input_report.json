@@ -1,0 +1,2638 @@
+{
+  "generated_at": "2026-04-13T07:02:54.518349Z",
+  "sql_file": "/home/ojasbhalerao/Documents/Uni/dataset_100_interconnected_txns.sql",
+  "ingest_endpoint": "http://localhost:8000/api/v1/transactions/ingest",
+  "totals": {
+    "transactions_parsed": 100,
+    "ingest_success": 100,
+    "ingest_errors": 0,
+    "flagged": 28,
+    "rule_counts": {
+      "ROUND_TRIPPING": 14,
+      "STRUCTURING": 6,
+      "MULE_NETWORK": 32,
+      "RAPID_LAYERING": 13,
+      "DORMANT_AWAKENING": 7
+    },
+    "primary_type_counts": {
+      "ROUND_TRIPPING": 8,
+      "MULE_NETWORK": 32,
+      "STRUCTURING": 1,
+      "RAPID_LAYERING": 1,
+      "DORMANT_AWAKENING": 2
+    }
+  },
+  "enrichment_summary": {
+    "max_device_account_count": 11,
+    "max_velocity_1h": 10,
+    "max_velocity_24h": 10
+  },
+  "runtime_snapshots": {
+    "health": {
+      "url": "http://localhost:8000/health",
+      "status_code": 200,
+      "payload": {
+        "status": "degraded",
+        "version": "1.0.0",
+        "neo4j": "connected",
+        "graph_stats": {
+          "accounts": 155,
+          "transactions": 650,
+          "alerts": 93,
+          "open_alerts": 93
+        },
+        "fraud_scoring": {
+          "ml_service_reachable": false,
+          "ml_service_url": "http://localhost:8002",
+          "ml_model_version": null,
+          "fallback_mode_available": true,
+          "ml_error": "All connection attempts failed"
+        },
+        "demo_mode": true
+      }
+    },
+    "alerts": {
+      "url": "http://localhost:8000/api/v1/alerts/?page=1&page_size=5",
+      "status_code": 200,
+      "payload": {
+        "items": [
+          {
+            "transaction_id": "TXN100100",
+            "risk_level": "HIGH",
+            "account_id": "ACC9410",
+            "risk_score": 80,
+            "recommendation": "HOLD",
+            "created_at": "2026-04-13T07:02:54.431000000+00:00",
+            "id": "ALT-EB3F22E1",
+            "shap_top3": [
+              "elevated_amount_\u20b92.6L: +10",
+              "velocity_1h_10_txns: +25",
+              "device_shared_10_accounts: +30"
+            ],
+            "primary_fraud_type": "MULE_NETWORK",
+            "rule_flags": [
+              "RAPID_LAYERING",
+              "MULE_NETWORK"
+            ],
+            "status": "OPEN"
+          },
+          {
+            "transaction_id": "TXN100099",
+            "risk_level": "CRITICAL",
+            "account_id": "ACC9423",
+            "risk_score": 90,
+            "created_at": "2026-04-13T07:02:54.368000000+00:00",
+            "recommendation": "BLOCK",
+            "id": "ALT-6F5E6522",
+            "shap_top3": [
+              "elevated_amount_\u20b92.8L: +10",
+              "device_shared_9_accounts: +30",
+              "round_tripping_pattern: +35"
+            ],
+            "primary_fraud_type": "MULE_NETWORK",
+            "status": "OPEN",
+            "rule_flags": [
+              "MULE_NETWORK",
+              "ROUND_TRIPPING"
+            ]
+          },
+          {
+            "transaction_id": "TXN100098",
+            "risk_level": "MEDIUM",
+            "account_id": "ACC9410",
+            "risk_score": 65,
+            "recommendation": "REVIEW",
+            "created_at": "2026-04-13T07:02:54.295000000+00:00",
+            "id": "ALT-96D0CFF7",
+            "shap_top3": [
+              "elevated_amount_\u20b92.8L: +10",
+              "velocity_1h_8_txns: +25",
+              "device_shared_9_accounts: +30"
+            ],
+            "primary_fraud_type": "MULE_NETWORK",
+            "status": "OPEN",
+            "rule_flags": [
+              "RAPID_LAYERING",
+              "MULE_NETWORK"
+            ]
+          },
+          {
+            "transaction_id": "TXN100097",
+            "risk_level": "MEDIUM",
+            "account_id": "ACC9410",
+            "risk_score": 65,
+            "recommendation": "REVIEW",
+            "created_at": "2026-04-13T07:02:54.224000000+00:00",
+            "id": "ALT-45E7FE8D",
+            "shap_top3": [
+              "elevated_amount_\u20b93.0L: +10",
+              "velocity_1h_7_txns: +25",
+              "device_shared_8_accounts: +30"
+            ],
+            "primary_fraud_type": "MULE_NETWORK",
+            "status": "OPEN",
+            "rule_flags": [
+              "RAPID_LAYERING",
+              "MULE_NETWORK"
+            ]
+          },
+          {
+            "transaction_id": "TXN100096",
+            "risk_level": "MEDIUM",
+            "account_id": "ACC9410",
+            "risk_score": 65,
+            "recommendation": "REVIEW",
+            "created_at": "2026-04-13T07:02:54.163000000+00:00",
+            "id": "ALT-347D67FD",
+            "shap_top3": [
+              "elevated_amount_\u20b93.0L: +10",
+              "velocity_1h_6_txns: +25",
+              "device_shared_7_accounts: +30"
+            ],
+            "primary_fraud_type": "MULE_NETWORK",
+            "status": "OPEN",
+            "rule_flags": [
+              "RAPID_LAYERING",
+              "MULE_NETWORK"
+            ]
+          }
+        ],
+        "page": 1,
+        "page_size": 5,
+        "total": 5
+      }
+    },
+    "graph_analytics_status": {
+      "url": "http://localhost:8000/api/v1/graph-analytics/status",
+      "status_code": 500,
+      "payload": {
+        "detail": "GDS status fetch failed: {neo4j_code: Neo.ClientError.Statement.TypeError} {message: Cannot subtract `Duration` from `String`} {gql_status: 50N42} {gql_status_description: error: general processing exception - unexpected error. Cannot subtract `Duration` from `String`}"
+      }
+    }
+  },
+  "top_risk_transactions": [
+    {
+      "txn_id": "TXN100076",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-9A186BC4",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK",
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100077",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-330C6B04",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK",
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100086",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-7DCAB6EA",
+      "rule_violations": [
+        "DORMANT_AWAKENING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100090",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-0C951522",
+      "rule_violations": [
+        "DORMANT_AWAKENING",
+        "MULE_NETWORK",
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100085",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 95.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-51A0FF9D",
+      "rule_violations": [
+        "DORMANT_AWAKENING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100087",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 95.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-23EFE76A",
+      "rule_violations": [
+        "DORMANT_AWAKENING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100088",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 95.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-D72D9397",
+      "rule_violations": [
+        "DORMANT_AWAKENING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100067",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 90.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-E1644FE2",
+      "rule_violations": [
+        "STRUCTURING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100073",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 90.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-41C6CD12",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100074",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 90.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-FF3ACFA6",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    }
+  ],
+  "enrichment_trace": [
+    {
+      "txn_id": "TXN100001",
+      "txn_timestamp": "2026-03-01T09:05:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1001-ACC1011",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100002",
+      "txn_timestamp": "2026-03-01T09:12:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1002-ACC1012",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100003",
+      "txn_timestamp": "2026-03-01T09:19:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1003-ACC1013",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100004",
+      "txn_timestamp": "2026-03-01T09:33:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1004-ACC1014",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100005",
+      "txn_timestamp": "2026-03-01T09:41:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1005-ACC1015",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100006",
+      "txn_timestamp": "2026-03-01T10:02:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1006-ACC1016",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100007",
+      "txn_timestamp": "2026-03-01T10:10:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1007-ACC1017",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100008",
+      "txn_timestamp": "2026-03-01T10:28:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1008-ACC1018",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100009",
+      "txn_timestamp": "2026-03-01T10:40:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1009-ACC1019",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100010",
+      "txn_timestamp": "2026-03-01T10:55:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1010-ACC1020",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100011",
+      "txn_timestamp": "2026-03-01T11:03:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1011-ACC1021",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100012",
+      "txn_timestamp": "2026-03-01T11:14:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1012-ACC1022",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100013",
+      "txn_timestamp": "2026-03-01T11:26:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1013-ACC1023",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100014",
+      "txn_timestamp": "2026-03-01T11:43:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1014-ACC1024",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100015",
+      "txn_timestamp": "2026-03-01T11:55:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1015-ACC1025",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100016",
+      "txn_timestamp": "2026-03-01T12:10:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1016-ACC1026",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100017",
+      "txn_timestamp": "2026-03-01T12:22:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1017-ACC1027",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100018",
+      "txn_timestamp": "2026-03-01T12:34:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1018-ACC1028",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100019",
+      "txn_timestamp": "2026-03-01T12:50:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1019-ACC1029",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100020",
+      "txn_timestamp": "2026-03-01T13:02:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1020-ACC1030",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100021",
+      "txn_timestamp": "2026-03-02T09:08:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1001-ACC1021",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100022",
+      "txn_timestamp": "2026-03-02T09:17:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1002-ACC1022",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100023",
+      "txn_timestamp": "2026-03-02T09:33:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1003-ACC1023",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100024",
+      "txn_timestamp": "2026-03-02T09:45:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1004-ACC1024",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100025",
+      "txn_timestamp": "2026-03-02T10:04:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1005-ACC1025",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100026",
+      "txn_timestamp": "2026-03-02T10:16:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1006-ACC1026",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100027",
+      "txn_timestamp": "2026-03-02T10:31:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1007-ACC1027",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100028",
+      "txn_timestamp": "2026-03-02T10:43:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1008-ACC1028",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100029",
+      "txn_timestamp": "2026-03-02T10:58:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1009-ACC1029",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100030",
+      "txn_timestamp": "2026-03-02T11:09:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1010-ACC1030",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100031",
+      "txn_timestamp": "2026-03-02T11:26:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1011-ACC1031",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100032",
+      "txn_timestamp": "2026-03-02T11:37:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1012-ACC1032",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100033",
+      "txn_timestamp": "2026-03-02T11:52:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1013-ACC1033",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100034",
+      "txn_timestamp": "2026-03-02T12:04:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1014-ACC1034",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100035",
+      "txn_timestamp": "2026-03-02T12:18:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1015-ACC1035",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100036",
+      "txn_timestamp": "2026-03-02T12:29:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1016-ACC1036",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100037",
+      "txn_timestamp": "2026-03-02T12:47:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1017-ACC1037",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100038",
+      "txn_timestamp": "2026-03-02T12:59:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1018-ACC1038",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100039",
+      "txn_timestamp": "2026-03-02T13:16:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1019-ACC1039",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100040",
+      "txn_timestamp": "2026-03-02T13:28:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1020-ACC1040",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100041",
+      "txn_timestamp": "2026-03-03T09:06:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1021-ACC1041",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100042",
+      "txn_timestamp": "2026-03-03T09:18:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1022-ACC1042",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100043",
+      "txn_timestamp": "2026-03-03T09:34:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1023-ACC1043",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100044",
+      "txn_timestamp": "2026-03-03T09:46:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1024-ACC1044",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100045",
+      "txn_timestamp": "2026-03-03T10:05:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1025-ACC1045",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100046",
+      "txn_timestamp": "2026-03-03T10:17:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1026-ACC1046",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100047",
+      "txn_timestamp": "2026-03-03T10:31:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1027-ACC1047",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100048",
+      "txn_timestamp": "2026-03-03T10:42:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1028-ACC1048",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100049",
+      "txn_timestamp": "2026-03-03T10:58:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-ACC1029-ACC1049",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100050",
+      "txn_timestamp": "2026-03-03T11:10:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-ACC1030-ACC1050",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100051",
+      "txn_timestamp": "2026-03-05T10:00:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-CYCLE-A-1",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100052",
+      "txn_timestamp": "2026-03-05T10:36:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-CYCLE-A-0",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100053",
+      "txn_timestamp": "2026-03-05T11:08:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-CYCLE-A-1",
+      "device_account_count": 3,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100054",
+      "txn_timestamp": "2026-03-05T11:30:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 3,
+      "device_id": "DEV-CYCLE-A-0",
+      "device_account_count": 3,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100055",
+      "txn_timestamp": "2026-03-05T12:02:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 4,
+      "device_id": "DEV-CYCLE-A-1",
+      "device_account_count": 3,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100056",
+      "txn_timestamp": "2026-03-05T12:37:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 4,
+      "device_id": "DEV-CYCLE-A-0",
+      "device_account_count": 3,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100057",
+      "txn_timestamp": "2026-03-05T13:05:00+00:00",
+      "event_type": "REVERSAL",
+      "velocity_1h": 1,
+      "velocity_24h": 5,
+      "device_id": "DEV-CYCLE-A-1",
+      "device_account_count": 3,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100058",
+      "txn_timestamp": "2026-03-05T13:22:00+00:00",
+      "event_type": "ADJUSTMENT",
+      "velocity_1h": 2,
+      "velocity_24h": 5,
+      "device_id": "DEV-CYCLE-A-0",
+      "device_account_count": 3,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100059",
+      "txn_timestamp": "2026-03-05T13:44:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 6,
+      "device_id": "DEV-CYCLE-A-1",
+      "device_account_count": 3,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100060",
+      "txn_timestamp": "2026-03-05T14:02:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 3,
+      "velocity_24h": 7,
+      "device_id": "DEV-CYCLE-A-0",
+      "device_account_count": 3,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100061",
+      "txn_timestamp": "2026-03-06T09:05:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-STRUCT-B",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100062",
+      "txn_timestamp": "2026-03-06T09:18:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-STRUCT-B",
+      "device_account_count": 3,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100063",
+      "txn_timestamp": "2026-03-06T09:31:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 3,
+      "device_id": "DEV-STRUCT-B",
+      "device_account_count": 4,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100064",
+      "txn_timestamp": "2026-03-06T09:44:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 4,
+      "device_id": "DEV-STRUCT-B",
+      "device_account_count": 5,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100065",
+      "txn_timestamp": "2026-03-06T09:57:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 5,
+      "device_id": "DEV-STRUCT-B",
+      "device_account_count": 6,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100066",
+      "txn_timestamp": "2026-03-06T10:10:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 6,
+      "device_id": "DEV-STRUCT-B",
+      "device_account_count": 7,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100067",
+      "txn_timestamp": "2026-03-06T10:23:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 7,
+      "device_id": "DEV-STRUCT-B",
+      "device_account_count": 8,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100068",
+      "txn_timestamp": "2026-03-06T10:41:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 5,
+      "velocity_24h": 8,
+      "device_id": "DEV-STRUCT-B",
+      "device_account_count": 9,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100069",
+      "txn_timestamp": "2026-03-06T10:52:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 5,
+      "velocity_24h": 9,
+      "device_id": "DEV-STRUCT-B",
+      "device_account_count": 10,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100070",
+      "txn_timestamp": "2026-03-06T11:04:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 5,
+      "velocity_24h": 10,
+      "device_id": "DEV-STRUCT-B",
+      "device_account_count": 11,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100071",
+      "txn_timestamp": "2026-03-07T08:20:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-LAYER-C",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100072",
+      "txn_timestamp": "2026-03-07T08:56:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-LAYER-C",
+      "device_account_count": 3,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100073",
+      "txn_timestamp": "2026-03-07T09:23:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-LAYER-C",
+      "device_account_count": 4,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100074",
+      "txn_timestamp": "2026-03-07T09:48:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-LAYER-C",
+      "device_account_count": 5,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100075",
+      "txn_timestamp": "2026-03-07T10:14:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-LAYER-C",
+      "device_account_count": 6,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100076",
+      "txn_timestamp": "2026-03-07T10:39:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-LAYER-C",
+      "device_account_count": 6,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100077",
+      "txn_timestamp": "2026-03-07T11:02:00+00:00",
+      "event_type": "ADJUSTMENT",
+      "velocity_1h": 2,
+      "velocity_24h": 3,
+      "device_id": "DEV-LAYER-C",
+      "device_account_count": 6,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100078",
+      "txn_timestamp": "2026-03-07T11:18:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 4,
+      "device_id": "DEV-LAYER-C",
+      "device_account_count": 7,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100079",
+      "txn_timestamp": "2026-03-07T11:34:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-LAYER-C",
+      "device_account_count": 8,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100080",
+      "txn_timestamp": "2026-03-07T11:52:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-LAYER-C",
+      "device_account_count": 8,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100081",
+      "txn_timestamp": "2026-03-08T14:00:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-DORM-D",
+      "device_account_count": 2,
+      "is_dormant": true,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100082",
+      "txn_timestamp": "2026-03-08T14:17:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-DORM-D",
+      "device_account_count": 3,
+      "is_dormant": true,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100083",
+      "txn_timestamp": "2026-03-08T14:22:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 3,
+      "velocity_24h": 3,
+      "device_id": "DEV-DORM-D",
+      "device_account_count": 4,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100084",
+      "txn_timestamp": "2026-03-08T14:27:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 4,
+      "velocity_24h": 4,
+      "device_id": "DEV-DORM-D",
+      "device_account_count": 5,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100085",
+      "txn_timestamp": "2026-03-08T14:44:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-DORM-D",
+      "device_account_count": 6,
+      "is_dormant": true,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100086",
+      "txn_timestamp": "2026-03-08T14:53:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 3,
+      "velocity_24h": 3,
+      "device_id": "DEV-DORM-D",
+      "device_account_count": 7,
+      "is_dormant": true,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100087",
+      "txn_timestamp": "2026-03-08T15:12:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-DORM-D",
+      "device_account_count": 8,
+      "is_dormant": true,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100088",
+      "txn_timestamp": "2026-03-08T15:24:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-DORM-D",
+      "device_account_count": 8,
+      "is_dormant": true,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100089",
+      "txn_timestamp": "2026-03-08T15:36:00+00:00",
+      "event_type": "REVERSAL",
+      "velocity_1h": 1,
+      "velocity_24h": 2,
+      "device_id": "DEV-DORM-D",
+      "device_account_count": 8,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100090",
+      "txn_timestamp": "2026-03-08T15:55:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 3,
+      "velocity_24h": 3,
+      "device_id": "DEV-DORM-D",
+      "device_account_count": 8,
+      "is_dormant": true,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100091",
+      "txn_timestamp": "2026-03-09T16:05:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-MULE-E",
+      "device_account_count": 2,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100092",
+      "txn_timestamp": "2026-03-09T16:09:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-MULE-E",
+      "device_account_count": 3,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100093",
+      "txn_timestamp": "2026-03-09T16:12:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-MULE-E",
+      "device_account_count": 4,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100094",
+      "txn_timestamp": "2026-03-09T16:16:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-MULE-E",
+      "device_account_count": 5,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100095",
+      "txn_timestamp": "2026-03-09T16:20:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 1,
+      "velocity_24h": 1,
+      "device_id": "DEV-MULE-E",
+      "device_account_count": 6,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100096",
+      "txn_timestamp": "2026-03-09T16:29:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 6,
+      "velocity_24h": 6,
+      "device_id": "DEV-MULE-E",
+      "device_account_count": 7,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100097",
+      "txn_timestamp": "2026-03-09T16:33:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 7,
+      "velocity_24h": 7,
+      "device_id": "DEV-MULE-E",
+      "device_account_count": 8,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100098",
+      "txn_timestamp": "2026-03-09T16:36:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 8,
+      "velocity_24h": 8,
+      "device_id": "DEV-MULE-E",
+      "device_account_count": 9,
+      "is_dormant": false,
+      "round_trip_closure": false
+    },
+    {
+      "txn_id": "TXN100099",
+      "txn_timestamp": "2026-03-09T16:48:00+00:00",
+      "event_type": "ADJUSTMENT",
+      "velocity_1h": 2,
+      "velocity_24h": 2,
+      "device_id": "DEV-MULE-E",
+      "device_account_count": 9,
+      "is_dormant": false,
+      "round_trip_closure": true
+    },
+    {
+      "txn_id": "TXN100100",
+      "txn_timestamp": "2026-03-09T16:56:00+00:00",
+      "event_type": "POSTED",
+      "velocity_1h": 10,
+      "velocity_24h": 10,
+      "device_id": "DEV-MULE-E",
+      "device_account_count": 10,
+      "is_dormant": false,
+      "round_trip_closure": false
+    }
+  ],
+  "ingest_records": [
+    {
+      "txn_id": "TXN100001",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100002",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100003",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100004",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100005",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100006",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100007",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100008",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100009",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100010",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 10.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100011",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100012",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100013",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100014",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100015",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100016",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100017",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100018",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100019",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100020",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100021",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100022",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100023",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100024",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100025",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100026",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100027",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100028",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100029",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100030",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100031",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100032",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100033",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100034",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100035",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100036",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100037",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100038",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100039",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100040",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100041",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100042",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100043",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100044",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100045",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100046",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100047",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100048",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100049",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100050",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100051",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 10.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100052",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 10.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100053",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 60.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-9495D0A8",
+      "rule_violations": [
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "ROUND_TRIPPING"
+    },
+    {
+      "txn_id": "TXN100054",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 45.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "ROUND_TRIPPING"
+    },
+    {
+      "txn_id": "TXN100055",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 45.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "ROUND_TRIPPING"
+    },
+    {
+      "txn_id": "TXN100056",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 45.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "ROUND_TRIPPING"
+    },
+    {
+      "txn_id": "TXN100057",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 45.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "ROUND_TRIPPING"
+    },
+    {
+      "txn_id": "TXN100058",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 45.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "ROUND_TRIPPING"
+    },
+    {
+      "txn_id": "TXN100059",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 45.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "ROUND_TRIPPING"
+    },
+    {
+      "txn_id": "TXN100060",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 57.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "ROUND_TRIPPING"
+    },
+    {
+      "txn_id": "TXN100061",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100062",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100063",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 54.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "STRUCTURING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100064",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 63.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-153C48DB",
+      "rule_violations": [
+        "STRUCTURING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100065",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 72.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-F2D436E6",
+      "rule_violations": [
+        "STRUCTURING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100066",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 81.0,
+      "risk_level": "HIGH",
+      "is_flagged": true,
+      "alert_id": "ALT-7AECD9BF",
+      "rule_violations": [
+        "STRUCTURING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100067",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 90.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-E1644FE2",
+      "rule_violations": [
+        "STRUCTURING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100068",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 65.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-60E8A533",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100069",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 65.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-8D915E22",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100070",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 70.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-5EF1A2C2",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100071",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 42.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "STRUCTURING"
+      ],
+      "primary_fraud_type": "STRUCTURING"
+    },
+    {
+      "txn_id": "TXN100072",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 60.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-344170E6",
+      "rule_violations": [
+        "RAPID_LAYERING"
+      ],
+      "primary_fraud_type": "RAPID_LAYERING"
+    },
+    {
+      "txn_id": "TXN100073",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 90.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-41C6CD12",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100074",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 90.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-FF3ACFA6",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100075",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 90.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-AC2D0E34",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100076",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-9A186BC4",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK",
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100077",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-330C6B04",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK",
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100078",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 40.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100079",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 40.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100080",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 90.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-EF63D650",
+      "rule_violations": [
+        "MULE_NETWORK",
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100081",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 65.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-E57A3F2E",
+      "rule_violations": [
+        "DORMANT_AWAKENING"
+      ],
+      "primary_fraud_type": "DORMANT_AWAKENING"
+    },
+    {
+      "txn_id": "TXN100082",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 65.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-56BA5CC9",
+      "rule_violations": [
+        "DORMANT_AWAKENING"
+      ],
+      "primary_fraud_type": "DORMANT_AWAKENING"
+    },
+    {
+      "txn_id": "TXN100083",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 42.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100084",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 42.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100085",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 95.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-51A0FF9D",
+      "rule_violations": [
+        "DORMANT_AWAKENING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100086",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-7DCAB6EA",
+      "rule_violations": [
+        "DORMANT_AWAKENING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100087",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 95.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-23EFE76A",
+      "rule_violations": [
+        "DORMANT_AWAKENING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100088",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 95.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-D72D9397",
+      "rule_violations": [
+        "DORMANT_AWAKENING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100089",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 65.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-5741ADCC",
+      "rule_violations": [
+        "MULE_NETWORK",
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100090",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 100.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-0C951522",
+      "rule_violations": [
+        "DORMANT_AWAKENING",
+        "MULE_NETWORK",
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100091",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 10.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100092",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 10.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [],
+      "primary_fraud_type": null
+    },
+    {
+      "txn_id": "TXN100093",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 40.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100094",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 40.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100095",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 40.0,
+      "risk_level": "LOW",
+      "is_flagged": false,
+      "alert_id": null,
+      "rule_violations": [
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100096",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 65.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-347D67FD",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100097",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 65.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-45E7FE8D",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100098",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 65.0,
+      "risk_level": "MEDIUM",
+      "is_flagged": true,
+      "alert_id": "ALT-96D0CFF7",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100099",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 90.0,
+      "risk_level": "CRITICAL",
+      "is_flagged": true,
+      "alert_id": "ALT-6F5E6522",
+      "rule_violations": [
+        "MULE_NETWORK",
+        "ROUND_TRIPPING"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    },
+    {
+      "txn_id": "TXN100100",
+      "ok": true,
+      "status_code": 200,
+      "risk_score": 80.0,
+      "risk_level": "HIGH",
+      "is_flagged": true,
+      "alert_id": "ALT-EB3F22E1",
+      "rule_violations": [
+        "RAPID_LAYERING",
+        "MULE_NETWORK"
+      ],
+      "primary_fraud_type": "MULE_NETWORK"
+    }
+  ]
+}

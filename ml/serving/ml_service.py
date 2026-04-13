@@ -472,6 +472,27 @@ def _align_xgb_features(features: np.ndarray) -> np.ndarray:
     return features[:, :expected]
 
 
+def _align_if_features(features: np.ndarray) -> np.ndarray:
+    """Align IF feature width to scaler/model expectation."""
+    expected = None
+
+    if if_scaler is not None and hasattr(if_scaler, "n_features_in_"):
+        expected = int(getattr(if_scaler, "n_features_in_"))
+    elif if_model is not None and hasattr(if_model, "model"):
+        expected = int(getattr(if_model.model, "n_features_in_", features.shape[1]))
+
+    if expected is None:
+        return features
+
+    current = int(features.shape[1])
+    if current == expected:
+        return features
+    if current < expected:
+        padding = np.zeros((features.shape[0], expected - current), dtype=features.dtype)
+        return np.hstack([features, padding])
+    return features[:, :expected]
+
+
 def _train_fallback_models() -> None:
     global fallback_ready, fraud_coef, risk_coef, feature_mean, feature_std, model_version
     data_source = _repo_root() / "fraud_scenarios.sql"
@@ -499,6 +520,7 @@ def _train_fallback_models() -> None:
 class MLScoringRequest(BaseModel):
     enriched_transaction: dict
     graph_features: Optional[dict] = None
+    graph_subgraph: Optional[dict] = None
 
 
 class MLScoringResponse(BaseModel):
@@ -570,7 +592,16 @@ async def load_models(model_dir: str = "/models"):
 
     try:
         from ml.models.xgboost_ensemble.model import XGBoostEnsembleScorer
-        from ml.models.xgboost_ensemble.shap_explainer import SHAPExplainer
+        shap_explainer_cls = None
+        try:
+            from ml.models.xgboost_ensemble.shap_explainer import SHAPExplainer
+
+            shap_explainer_cls = SHAPExplainer
+        except Exception as shap_import_error:
+            # SHAP is optional for scoring. Keep XGBoost loading even if explainability deps are absent.
+            print(
+                f"SHAP unavailable; continuing without SHAP explainer: {shap_import_error}"
+            )
 
         xgb_path = os.path.join(model_dir, "xgboost_model.pkl")
         if os.path.exists(xgb_path):
@@ -596,9 +627,13 @@ async def load_models(model_dir: str = "/models"):
                     xgb_model = payload
 
             try:
-                if shap_explainer is None and hasattr(xgb_model, "model"):
-                    shap_explainer = SHAPExplainer(xgb_model.model)
-            except:
+                if (
+                    shap_explainer is None
+                    and shap_explainer_cls is not None
+                    and hasattr(xgb_model, "model")
+                ):
+                    shap_explainer = shap_explainer_cls(xgb_model.model)
+            except Exception:
                 pass
             print("Loaded XGBoost model")
     except Exception as e:
@@ -621,7 +656,9 @@ async def load_models(model_dir: str = "/models"):
 
 
 async def score_transaction(
-    enriched_txn: dict, graph_features: Optional[dict] = None
+    enriched_txn: dict,
+    graph_features: Optional[dict] = None,
+    graph_subgraph: Optional[dict] = None,
 ) -> dict:
     start_time = time.time()
 
@@ -632,10 +669,28 @@ async def score_transaction(
         try:
             import torch
 
-            tx_features = extract_tx_features(enriched_txn)
-            tx_tensor = torch.FloatTensor(tx_features).unsqueeze(0)
-            with torch.no_grad():
-                gnn_score = gnn_model.predict_proba(tx_tensor).item()
+            if graph_subgraph and graph_subgraph.get("node_features"):
+                node_features = graph_subgraph.get("node_features") or []
+                edge_pairs = graph_subgraph.get("edge_index") or []
+                center_index = int(graph_subgraph.get("center_index", 0) or 0)
+
+                x_tensor = torch.FloatTensor(node_features)
+                edge_tensor = None
+                if edge_pairs:
+                    edge_tensor = torch.LongTensor(edge_pairs).t().contiguous()
+
+                with torch.no_grad():
+                    probs = gnn_model.predict_proba(x_tensor, edge_index=edge_tensor)
+                    if probs.dim() == 0:
+                        gnn_score = float(probs.item())
+                    else:
+                        safe_center_index = max(0, min(center_index, probs.shape[0] - 1))
+                        gnn_score = float(probs[safe_center_index].item())
+            else:
+                tx_features = extract_tx_features(enriched_txn)
+                tx_tensor = torch.FloatTensor(tx_features).unsqueeze(0)
+                with torch.no_grad():
+                    gnn_score = gnn_model.predict_proba(tx_tensor).item()
         except Exception as e:
             print(f"GNN scoring error: {e}")
 
@@ -644,10 +699,16 @@ async def score_transaction(
         try:
             tx_features = extract_tx_features(enriched_txn)
             tx_array = np.array([tx_features], dtype=np.float64)
+            tx_array = _align_if_features(tx_array)
             if if_scaler is not None:
                 tx_array = if_scaler.transform(tx_array)
             if_scores = if_model.score_samples(tx_array)
-            if_score = if_model.score_to_0_100(np.array([if_scores[0]]))[0] / 100.0
+            if hasattr(if_model, "score_to_0_100") and len(if_scores) > 1:
+                if_score = if_model.score_to_0_100(np.array([if_scores[0]]))[0] / 100.0
+            else:
+                # Stable single-row mapping when batch normalization cannot be applied.
+                raw_score = float(if_scores[0])
+                if_score = float(np.clip(1.0 / (1.0 + np.exp(12.0 * raw_score)), 0.0, 1.0))
         except Exception as e:
             print(f"IF scoring error: {e}")
 
@@ -748,6 +809,9 @@ def extract_tx_features(txn: dict) -> list:
         "kyc_tier",
         "avg_monthly_balance",
         "transaction_count_30d",
+        "avg_txn_amount_30d",
+        "device_count_30d",
+        "ip_count_30d",
         "avg_txn_amount",
         "std_txn_amount",
         "max_txn_amount",
@@ -783,7 +847,9 @@ async def startup():
 @app.post("/api/v1/ml/score", response_model=MLScoringResponse)
 async def score(request: MLScoringRequest):
     result = await score_transaction(
-        request.enriched_transaction, request.graph_features
+        request.enriched_transaction,
+        request.graph_features,
+        request.graph_subgraph,
     )
     return MLScoringResponse(**result)
 
@@ -792,7 +858,11 @@ async def score(request: MLScoringRequest):
 async def score_batch(requests: list[MLScoringRequest]):
     results = []
     for req in requests:
-        result = await score_transaction(req.enriched_transaction, req.graph_features)
+        result = await score_transaction(
+            req.enriched_transaction,
+            req.graph_features,
+            req.graph_subgraph,
+        )
         results.append(result)
     return {"results": results, "count": len(results)}
 

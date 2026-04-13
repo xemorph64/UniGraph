@@ -15,16 +15,19 @@ export interface BackendTransaction {
 
 export interface BackendAlert {
   id: string;
-  transaction_id: string;
-  account_id: string;
-  risk_score: number;
+  transaction_id?: string;
+  account_id?: string;
+  risk_score?: number;
+  ensemble_score?: number;
   risk_level?: string;
   recommendation?: string;
   shap_top3?: string[];
   rule_flags?: string[];
   primary_fraud_type?: string;
+  fraud_type?: string;
   status?: string;
   created_at?: string;
+  alert_timestamp?: string;
 }
 
 export interface AlertCardLike {
@@ -329,21 +332,21 @@ export function toUiTransaction(txn: BackendTransaction): Transaction {
 
 export function toAlertCard(alert: BackendAlert, txn?: BackendTransaction): AlertCardLike {
   const flags = (alert.rule_flags || []).map(prettifyFlag);
-  const type = deriveFraudType(alert.rule_flags || [], alert.primary_fraud_type);
+  const type = alert.fraud_type || alert.primary_fraud_type || deriveFraudType(alert.rule_flags || [], alert.primary_fraud_type);
 
   return {
     id: alert.id,
     fraudType: type,
-    account: alert.account_id,
+    account: alert.account_id || "-",
     amount: txn ? formatCurrency(txn.amount) : "N/A",
-    riskScore: Math.round(alert.risk_score || 0),
+    riskScore: Math.round(alert.risk_score || alert.ensemble_score || 0),
     channel: txn?.channel || "-",
-    timeDetected: formatTimestamp(alert.created_at),
+    timeDetected: formatTimestamp(alert.created_at || alert.alert_timestamp),
     shapReason: (alert.shap_top3 || []).join(" + ") || "Pattern-based risk detection",
     description: alert.recommendation || `${type} signal triggered by risk engine`,
     recommendedAction: alert.recommendation || "Investigate alert",
     status: alert.status || "OPEN",
-    transactionId: alert.transaction_id,
+    transactionId: alert.transaction_id || "",
   };
 }
 

@@ -11,7 +11,9 @@ class Settings(BaseSettings):
 
     APP_ENV: str = "development"
     APP_DEBUG: bool = True
-    APP_CORS_ORIGINS: str = "http://localhost:5173"
+    APP_CORS_ORIGINS: str = (
+        "http://localhost:5173,http://localhost:8080,http://127.0.0.1:8080"
+    )
 
     NEO4J_URI: str = "bolt://localhost:7687"
     NEO4J_USER: str = "neo4j"
@@ -50,7 +52,7 @@ class Settings(BaseSettings):
     NCRP_API_URL: str = ""
     NCRP_API_KEY: str = ""
 
-    DEMO_MODE: bool = False
+    DEMO_MODE: bool = True
     DEMO_SEED_ON_STARTUP: bool = False
     ALLOW_DEMO_DATA: bool = False
 
