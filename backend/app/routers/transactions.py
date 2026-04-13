@@ -11,6 +11,60 @@ from .ws import manager
 router = APIRouter()
 
 
+def _risk_level_and_recommendation(risk_score: float) -> tuple[str, str]:
+    if risk_score >= 90:
+        return "CRITICAL", "BLOCK"
+    if risk_score >= 80:
+        return "HIGH", "HOLD"
+    if risk_score >= 60:
+        return "MEDIUM", "REVIEW"
+    return "LOW", "ALLOW"
+
+
+def _to_transaction_response_payload(txn: dict) -> dict:
+    txn_id = str(txn.get("txn_id") or txn.get("id") or "")
+    risk_score = float(txn.get("risk_score", 0.0) or 0.0)
+
+    risk_level = txn.get("risk_level")
+    recommendation = txn.get("recommendation")
+    if not risk_level or not recommendation:
+        risk_level, recommendation = _risk_level_and_recommendation(risk_score)
+
+    timestamp = txn.get("timestamp")
+    if hasattr(timestamp, "isoformat"):
+        timestamp = timestamp.isoformat()
+    elif not timestamp:
+        timestamp = datetime.utcnow().isoformat() + "Z"
+
+    rule_violations = txn.get("rule_violations") or []
+    if not isinstance(rule_violations, list):
+        rule_violations = [str(rule_violations)]
+
+    xgb_risk_score = txn.get("xgboost_risk_score")
+    if xgb_risk_score is None:
+        xgb_risk_score = int(round(risk_score))
+
+    return {
+        "txn_id": txn_id,
+        "from_account": str(txn.get("from_account") or ""),
+        "to_account": str(txn.get("to_account") or ""),
+        "amount": float(txn.get("amount", 0.0) or 0.0),
+        "channel": str(txn.get("channel") or "IMPS"),
+        "timestamp": str(timestamp),
+        "risk_score": risk_score,
+        "risk_level": str(risk_level),
+        "recommendation": str(recommendation),
+        "rule_violations": [str(rule) for rule in rule_violations],
+        "primary_fraud_type": txn.get("primary_fraud_type"),
+        "is_flagged": bool(txn.get("is_flagged", risk_score >= 60)),
+        "alert_id": txn.get("alert_id"),
+        "gnn_fraud_probability": txn.get("gnn_fraud_probability"),
+        "if_anomaly_score": txn.get("if_anomaly_score"),
+        "xgboost_risk_score": int(xgb_risk_score),
+        "model_version": txn.get("model_version"),
+    }
+
+
 class TransactionResponse(BaseModel):
     txn_id: str
     from_account: str
@@ -74,7 +128,7 @@ async def get_transaction(txn_id: str):
     txn = await neo4j_service.get_transaction(txn_id)
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    return txn
+    return TransactionResponse(**_to_transaction_response_payload(txn))
 
 
 @router.get("/")

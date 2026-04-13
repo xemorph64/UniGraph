@@ -33,6 +33,9 @@ risk_coef = None
 feature_mean = None
 feature_std = None
 
+# Runtime scorer currently builds 26 XGBoost features via prepare_features().
+RUNTIME_XGB_FEATURE_WIDTH = 26
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -472,6 +475,30 @@ def _align_xgb_features(features: np.ndarray) -> np.ndarray:
     return features[:, :expected]
 
 
+def _xgb_feature_width_mismatch(features: np.ndarray) -> tuple[bool, Optional[int], int]:
+    """Return mismatch status between runtime features and trained XGBoost width."""
+    if xgb_model is None or not hasattr(xgb_model, "model"):
+        return False, None, int(features.shape[1])
+
+    expected = getattr(xgb_model.model, "n_features_in_", None)
+    if expected is None:
+        return False, None, int(features.shape[1])
+
+    runtime_width = int(features.shape[1])
+    expected_width = int(expected)
+    return runtime_width != expected_width, expected_width, runtime_width
+
+
+def _xgb_model_width_compatible() -> bool:
+    """Check whether loaded XGBoost artifact width matches runtime feature builder."""
+    if xgb_model is None or not hasattr(xgb_model, "model"):
+        return True
+    expected = getattr(xgb_model.model, "n_features_in_", None)
+    if expected is None:
+        return True
+    return int(expected) == RUNTIME_XGB_FEATURE_WIDTH
+
+
 def _align_if_features(features: np.ndarray) -> np.ndarray:
     """Align IF feature width to scaler/model expectation."""
     expected = None
@@ -491,6 +518,20 @@ def _align_if_features(features: np.ndarray) -> np.ndarray:
         padding = np.zeros((features.shape[0], expected - current), dtype=features.dtype)
         return np.hstack([features, padding])
     return features[:, :expected]
+
+
+def _if_estimator() -> Optional[object]:
+    """Return the underlying sklearn IsolationForest estimator when available."""
+    if if_model is None:
+        return None
+    if hasattr(if_model, "model"):
+        return if_model.model
+    return if_model
+
+
+def _if_anomaly_score_from_margin(decision_margin: float) -> float:
+    """Map IF decision margin (>0 normal, <0 anomaly) to [0,1] anomaly score."""
+    return float(np.clip(1.0 / (1.0 + np.exp(8.0 * decision_margin)), 0.0, 1.0))
 
 
 def _train_fallback_models() -> None:
@@ -636,6 +677,16 @@ async def load_models(model_dir: str = "/models"):
             except Exception:
                 pass
             print("Loaded XGBoost model")
+
+            if not _xgb_model_width_compatible():
+                expected = getattr(xgb_model.model, "n_features_in_", None)
+                print(
+                    "XGBoost model feature width mismatch "
+                    f"(artifact={expected}, runtime={RUNTIME_XGB_FEATURE_WIDTH}); "
+                    "disabling XGBoost scorer"
+                )
+                xgb_model = None
+                shap_explainer = None
     except Exception as e:
         print(f"Could not load XGBoost model: {e}")
 
@@ -702,13 +753,17 @@ async def score_transaction(
             tx_array = _align_if_features(tx_array)
             if if_scaler is not None:
                 tx_array = if_scaler.transform(tx_array)
-            if_scores = if_model.score_samples(tx_array)
-            if hasattr(if_model, "score_to_0_100") and len(if_scores) > 1:
-                if_score = if_model.score_to_0_100(np.array([if_scores[0]]))[0] / 100.0
+            estimator = _if_estimator()
+            if estimator is not None and hasattr(estimator, "decision_function"):
+                decision_margin = float(estimator.decision_function(tx_array)[0])
+                if_score = _if_anomaly_score_from_margin(decision_margin)
             else:
-                # Stable single-row mapping when batch normalization cannot be applied.
+                if_scores = if_model.score_samples(tx_array)
                 raw_score = float(if_scores[0])
-                if_score = float(np.clip(1.0 / (1.0 + np.exp(12.0 * raw_score)), 0.0, 1.0))
+                # Use model offset (when available) so 0.5 aligns near IF boundary.
+                offset = float(getattr(estimator, "offset_", 0.0)) if estimator is not None else 0.0
+                decision_margin = raw_score - offset
+                if_score = _if_anomaly_score_from_margin(decision_margin)
         except Exception as e:
             print(f"IF scoring error: {e}")
 
@@ -743,6 +798,13 @@ async def score_transaction(
                 default_acct,
                 rule_violations,
             )
+            mismatch, expected_width, runtime_width = _xgb_feature_width_mismatch(
+                xgb_features
+            )
+            if mismatch:
+                raise ValueError(
+                    f"XGBoost feature width mismatch (runtime={runtime_width}, expected={expected_width})"
+                )
             xgb_features = _align_xgb_features(xgb_features)
             risk_score = xgb_model.predict_risk_score(xgb_features)
         except Exception as e:
@@ -774,6 +836,13 @@ async def score_transaction(
                 default_acct,
                 rule_violations,
             )
+            mismatch, expected_width, runtime_width = _xgb_feature_width_mismatch(
+                xgb_features
+            )
+            if mismatch:
+                raise ValueError(
+                    f"XGBoost feature width mismatch for SHAP (runtime={runtime_width}, expected={expected_width})"
+                )
             xgb_features = _align_xgb_features(xgb_features)
             shap_result = shap_explainer.explain(xgb_features)
             shap_top3 = shap_result.get("shap_top3", [])
