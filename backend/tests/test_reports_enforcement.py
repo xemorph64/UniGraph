@@ -8,11 +8,13 @@ from backend.app.routers import enforcement, reports
 
 def test_generate_str_creates_persisted_draft(monkeypatch):
     created_payload = {}
+    captured_case_data = {}
 
     async def fake_get_alert_by_id(alert_id: str):
         return {
             "id": alert_id,
             "account_id": "ACC-1001",
+            "transaction_id": "TXN-1001",
             "risk_score": 88.5,
             "risk_level": "HIGH",
             "rule_flags": ["STRUCTURING"],
@@ -23,7 +25,20 @@ def test_generate_str_creates_persisted_draft(monkeypatch):
         return {"nodes": [{"id": account_id}], "edges": []}
 
     async def fake_generate_str_narrative(case_data: dict):
+        captured_case_data.update(case_data)
         return f"Narrative for {case_data['account_id']}"
+
+    async def fake_get_transaction(txn_id: str):
+        return {
+            "txn_id": txn_id,
+            "amount": 49000,
+            "channel": "UPI",
+            "from_account": "ACC-1001",
+            "to_account": "ACC-2002",
+            "timestamp": "2026-03-06T10:23:00Z",
+            "scoring_source": "ml_blended",
+            "model_version": "test-model-v1",
+        }
 
     async def fake_create_str_report(**kwargs):
         created_payload.update(kwargs)
@@ -33,6 +48,7 @@ def test_generate_str_creates_persisted_draft(monkeypatch):
     monkeypatch.setattr(
         reports.neo4j_service, "get_account_subgraph", fake_get_account_subgraph
     )
+    monkeypatch.setattr(reports.neo4j_service, "get_transaction", fake_get_transaction)
     monkeypatch.setattr(
         reports.llm_service, "generate_str_narrative", fake_generate_str_narrative
     )
@@ -49,6 +65,8 @@ def test_generate_str_creates_persisted_draft(monkeypatch):
     assert "Narrative for ACC-1001" in response.narrative
     assert created_payload["str_id"] == "STR-ALT-100"
     assert created_payload["alert_id"] == "ALT-100"
+    assert captured_case_data["case_notes"] == "reviewed"
+    assert "txn_id=TXN-1001" in captured_case_data["transaction_snapshot"]
 
 
 def test_submit_str_falls_back_to_demo_without_fiu_config(monkeypatch):

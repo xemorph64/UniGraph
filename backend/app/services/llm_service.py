@@ -6,14 +6,14 @@ In production, replace with on-premise Qwen 3.5 9B via vLLM.
 
 import httpx
 import structlog
-from typing import Optional
+from typing import Any
 from ..config import settings
 
 logger = structlog.get_logger()
 
 STR_NARRATIVE_PROMPT = """You are UniGRAPH's AML investigation assistant for Union Bank of India.
 You analyze suspicious transaction patterns and generate FIU-IND compliant STR narratives.
-Always be professional, specific, and cite transaction IDs and amounts.
+Always be professional, evidence-grounded, and cite transaction IDs, amounts, channels, and timing where available.
 Respond in formal banking compliance language.
 
 Generate a Suspicious Transaction Report (STR) narrative for the following case:
@@ -22,9 +22,16 @@ Case ID: {case_id}
 Flagged Account: {account_id}
 Risk Score: {risk_score}/100
 Risk Level: {risk_level}
+Primary Fraud Type: {primary_fraud_type}
 
 Transaction Chain:
 {transaction_chain}
+
+Transaction Snapshot:
+{transaction_snapshot}
+
+Graph Context:
+{graph_summary}
 
 Rule Violations Detected:
 {rule_violations}
@@ -32,38 +39,82 @@ Rule Violations Detected:
 Top Risk Factors (SHAP):
 {shap_reasons}
 
-Generate a concise STR narrative (max 500 words) covering:
-1. Nature of suspicion
-2. Transaction pattern description
-3. Why this matches a known fraud typology
-4. Recommended investigation steps
+Investigator Case Notes:
+{case_notes}
+
+Current System Recommendation:
+{recommendation}
+
+Generate a detailed STR draft (350-650 words) with these sections:
+1. Executive summary of suspicion
+2. Evidence and transaction behavior timeline
+3. Typology mapping and rationale
+4. Immediate risk and customer exposure
+5. Recommended investigation and compliance actions
+6. Filing readiness statement for FIU-IND
 """
 
-CASE_SUMMARY_PROMPT = """Summarize this fraud investigation case for an investigator:
+CASE_SUMMARY_PROMPT = """Prepare a detailed investigator note for this fraud case:
 
 Account: {account_id}
 Risk Score: {risk_score}
+Risk Level: {risk_level}
 Alerts: {alert_count}
+Primary Fraud Type: {primary_fraud_type}
 Rule violations: {rule_violations}
+Top SHAP factors:
+{shap_reasons}
+Current recommendation: {recommendation}
+Graph context: {graph_summary}
+Transaction snapshot: {transaction_snapshot}
 Transaction pattern: {pattern_description}
 
-Provide a 3-sentence summary of:
-1. What happened
-2. Why it's suspicious
-3. What to investigate next
+Respond with concise sections:
+1. Why this case was flagged
+2. What evidence is strongest
+3. What to verify immediately
+4. Suggested next investigator actions
+Use clear bullet points and keep it practical for on-screen triage.
 """
 
 
 class LLMService:
     def __init__(self):
-        self.api_url = settings.GROQ_API_URL
+        base_url = str(getattr(settings, "LLM_URL", "") or "").rstrip("/")
+        if settings.GROQ_API_URL:
+            self.api_url = settings.GROQ_API_URL
+        elif base_url:
+            self.api_url = f"{base_url}/chat/completions"
+        else:
+            self.api_url = "https://api.groq.com/openai/v1/chat/completions"
         self.api_key = settings.GROQ_API_KEY
         self.model = settings.LLM_MODEL
+
+    @staticmethod
+    def _stringify_list(value: Any, *, default: str = "None") -> str:
+        if value is None:
+            return default
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            return "\n".join(cleaned) if cleaned else default
+        text = str(value).strip()
+        return text if text else default
+
+    @staticmethod
+    def _stringify_rule_violations(value: Any) -> str:
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            return ", ".join(cleaned) if cleaned else "none"
+        text = str(value or "").strip()
+        return text if text else "none"
 
     async def _call_groq(
         self, system_prompt: str, user_message: str, max_tokens: int = 1000
     ) -> str:
-        if not self.api_key or self.api_key == "your_groq_api_key_here":
+        if not self.api_key or self.api_key in {
+            "your_groq_api_key_here",
+            "PASTE_YOUR_GROQ_API_KEY_HERE",
+        }:
             logger.warning("groq_api_key_not_set")
             return self._mock_llm_response(user_message)
 
@@ -78,7 +129,7 @@ class LLMService:
                 {"role": "user", "content": user_message},
             ],
             "max_tokens": max_tokens,
-            "temperature": 0.3,
+            "temperature": 0.25,
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
@@ -94,24 +145,25 @@ class LLMService:
 
     def _mock_llm_response(self, context: str) -> str:
         """Fallback when Groq API key is not configured."""
-        return """SUSPICIOUS TRANSACTION REPORT — DRAFT
+        return """INVESTIGATION NOTE — DRAFT
 
-Based on the analysis performed by UniGRAPH's ML ensemble, this account has been
-flagged for exhibiting patterns consistent with rapid layering fraud. Multiple
-high-value transactions were detected within a compressed time window, with funds
-moving through several intermediary accounts before reaching the destination.
+1) Why this case was flagged:
+The account shows high-risk behavioral anomalies including elevated transfer velocity,
+multi-hop fund movement, and rule-violation overlap indicating coordinated laundering
+behavior rather than isolated customer activity.
 
-The transaction velocity (8 transactions in 47 minutes) significantly exceeds the
-account's historical baseline. The GraphSAGE GNN model detected that this account
-belongs to a community with elevated fraud risk (community risk score: 0.87).
+2) Strongest evidence:
+- Transaction frequency in a compressed window is materially above baseline.
+- Counterparty flow pattern indicates layering or pass-through behavior.
+- SHAP factors point to amount/channel/velocity as primary risk drivers.
 
-RECOMMENDED INVESTIGATION STEPS:
-1. Freeze account pending investigation under PMLA 2002 Section 12
-2. Request KYC documents from originating branch
-3. Cross-reference beneficiary accounts with MuleHunter.AI database
-4. File STR with FIU-IND within 7 days if suspicion is confirmed
+3) Immediate investigator actions:
+1. Validate source-of-funds and beneficiary linkage for top-risk transactions.
+2. Cross-check linked accounts/devices for recurrence across historical alerts.
+3. Escalate for supervisory review if corroborating evidence persists.
+4. Prepare STR evidence bundle for FIU-IND filing timeline.
 
-[Note: This is a demo response. Configure GROQ_API_KEY for live LLM generation.]
+[Note: Demo fallback response. Configure GROQ_API_KEY in root .env for live LLM output.]
 """
 
     async def generate_str_narrative(self, case_data: dict) -> str:
@@ -121,22 +173,53 @@ RECOMMENDED INVESTIGATION STEPS:
             account_id=case_data.get("account_id", "ACC-UNKNOWN"),
             risk_score=case_data.get("risk_score", 0),
             risk_level=case_data.get("risk_level", "HIGH"),
+            primary_fraud_type=case_data.get("primary_fraud_type", "UNSPECIFIED"),
             transaction_chain=case_data.get("transaction_chain", "No chain data"),
-            rule_violations=", ".join(case_data.get("rule_violations", [])),
-            shap_reasons="\n".join(case_data.get("shap_top3", [])),
+            transaction_snapshot=case_data.get(
+                "transaction_snapshot", "No transaction snapshot available"
+            ),
+            graph_summary=case_data.get("graph_summary", "No graph summary available"),
+            rule_violations=self._stringify_rule_violations(
+                case_data.get("rule_violations", [])
+            ),
+            shap_reasons=self._stringify_list(case_data.get("shap_top3", [])),
+            case_notes=case_data.get("case_notes") or "No investigator notes provided",
+            recommendation=case_data.get("recommendation", "REVIEW"),
         )
         system = (
             "You are a senior AML compliance officer at Union Bank of India. "
             "You write precise, professional STR reports in plain English. "
-            "Be specific about amounts, account IDs, and timestamps."
+            "Be specific about amounts, account IDs, timestamps, channels, and rule rationale. "
+            "Use section headers and numbered actions."
         )
-        return await self._call_groq(system, prompt, max_tokens=800)
+        return await self._call_groq(system, prompt, max_tokens=1200)
 
     async def summarize_case(self, case_data: dict) -> str:
-        """Generate a quick case summary for investigators."""
-        prompt = CASE_SUMMARY_PROMPT.format(**case_data)
-        system = "You are a fraud investigation assistant. Be concise and actionable."
-        return await self._call_groq(system, prompt, max_tokens=300)
+        """Generate a detailed case summary for investigators."""
+        prompt = CASE_SUMMARY_PROMPT.format(
+            account_id=case_data.get("account_id", "ACC-UNKNOWN"),
+            risk_score=case_data.get("risk_score", 0),
+            risk_level=case_data.get("risk_level", "UNKNOWN"),
+            alert_count=case_data.get("alert_count", 1),
+            primary_fraud_type=case_data.get("primary_fraud_type", "UNSPECIFIED"),
+            rule_violations=self._stringify_rule_violations(
+                case_data.get("rule_violations", [])
+            ),
+            shap_reasons=self._stringify_list(case_data.get("shap_reasons", [])),
+            recommendation=case_data.get("recommendation", "REVIEW"),
+            graph_summary=case_data.get("graph_summary", "No graph summary available"),
+            transaction_snapshot=case_data.get(
+                "transaction_snapshot", "No transaction snapshot available"
+            ),
+            pattern_description=case_data.get(
+                "pattern_description", "No pattern description available"
+            ),
+        )
+        system = (
+            "You are a fraud investigation assistant writing analyst-ready notes. "
+            "Be specific, concise, and operationally useful for immediate triage."
+        )
+        return await self._call_groq(system, prompt, max_tokens=700)
 
     async def answer_investigator_question(self, question: str, context: dict) -> str:
         """Answer investigator's natural language questions about a case."""

@@ -75,14 +75,58 @@ async def generate_str(request: STRGenerateRequest):
         raise HTTPException(status_code=404, detail="Alert not found")
 
     subgraph = await neo4j_service.get_account_subgraph(alert["account_id"], hops=2)
+    transaction_id = alert.get("transaction_id")
+    transaction = (
+        await neo4j_service.get_transaction(transaction_id) if transaction_id else None
+    )
+
+    nodes = subgraph.get("nodes") or []
+    edges = subgraph.get("edges") or []
+    linked_accounts: set[str] = set()
+    for edge in edges:
+        source = str(edge.get("source") or edge.get("from") or "")
+        target = str(edge.get("target") or edge.get("to") or "")
+        if source == alert["account_id"] and target and target != alert["account_id"]:
+            linked_accounts.add(target)
+        if target == alert["account_id"] and source and source != alert["account_id"]:
+            linked_accounts.add(source)
+
+    linked_accounts_text = ", ".join(sorted(linked_accounts)[:8]) or "none"
+    if transaction:
+        transaction_snapshot = "; ".join(
+            [
+                f"txn_id={transaction.get('txn_id', transaction_id) or transaction_id}",
+                f"amount={transaction.get('amount', 'NA')}",
+                f"channel={transaction.get('channel', 'NA')}",
+                f"from={transaction.get('from_account', 'NA')}",
+                f"to={transaction.get('to_account', 'NA')}",
+                f"timestamp={transaction.get('timestamp') or transaction.get('created_at') or 'NA'}",
+                f"scoring_source={transaction.get('scoring_source', 'NA')}",
+                f"model_version={transaction.get('model_version', 'NA')}",
+            ]
+        )
+    else:
+        transaction_snapshot = f"txn_id={transaction_id or 'NA'}; transaction details unavailable"
+
     case_data = {
         "case_id": f"CASE-{request.alert_id}",
         "account_id": alert["account_id"],
         "risk_score": alert.get("risk_score", 0),
         "risk_level": alert.get("risk_level", "HIGH"),
+        "primary_fraud_type": alert.get("primary_fraud_type") or "UNSPECIFIED",
         "rule_violations": alert.get("rule_flags", []),
         "shap_top3": alert.get("shap_top3", []),
-        "transaction_chain": f"Account {alert['account_id']} has {len(subgraph.get('nodes', []))} connected nodes",
+        "transaction_chain": (
+            f"Account {alert['account_id']} has {len(nodes)} connected nodes and {len(edges)} "
+            f"fund-flow edges in 2-hop neighborhood"
+        ),
+        "transaction_snapshot": transaction_snapshot,
+        "graph_summary": (
+            f"2-hop subgraph nodes={len(nodes)}; edges={len(edges)}; "
+            f"linked_accounts={linked_accounts_text}"
+        ),
+        "recommendation": alert.get("recommendation", "REVIEW"),
+        "case_notes": request.case_notes or "No investigator notes supplied",
     }
 
     narrative = await llm_service.generate_str_narrative(case_data)

@@ -33,6 +33,7 @@ def test_str_generate_approve_submit_workflow_with_persistence(monkeypatch):
         return {
             "id": alert_id,
             "account_id": "ACC-E2E-1",
+            "transaction_id": "TXN-E2E-1",
             "risk_score": 91.2,
             "risk_level": "CRITICAL",
             "rule_flags": ["STRUCTURING"],
@@ -41,6 +42,18 @@ def test_str_generate_approve_submit_workflow_with_persistence(monkeypatch):
 
     async def fake_get_account_subgraph(account_id: str, hops: int = 2):
         return {"nodes": [{"id": account_id}], "edges": []}
+
+    async def fake_get_transaction(txn_id: str):
+        return {
+            "txn_id": txn_id,
+            "amount": 250000,
+            "channel": "RTGS",
+            "from_account": "ACC-E2E-1",
+            "to_account": "ACC-E2E-2",
+            "timestamp": "2026-03-09T16:56:00Z",
+            "scoring_source": "ml_blended",
+            "model_version": "e2e-model-v1",
+        }
 
     async def fake_generate_str_narrative(case_data: dict):
         return f"Narrative for {case_data['account_id']}"
@@ -83,6 +96,7 @@ def test_str_generate_approve_submit_workflow_with_persistence(monkeypatch):
     monkeypatch.setattr(
         reports.neo4j_service, "get_account_subgraph", fake_get_account_subgraph
     )
+    monkeypatch.setattr(reports.neo4j_service, "get_transaction", fake_get_transaction)
     monkeypatch.setattr(
         reports.llm_service, "generate_str_narrative", fake_generate_str_narrative
     )

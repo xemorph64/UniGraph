@@ -221,7 +221,7 @@ export default function GraphExplorer() {
 
           <div className="bg-card border border-border rounded-[10px] p-4">
             <div className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">Investigator Note</div>
-            <p className="text-[11px] text-muted-foreground leading-relaxed italic">{payload.investigation_note || "No generated note available."}</p>
+            <p className="text-[11px] text-muted-foreground leading-relaxed italic whitespace-pre-wrap">{payload.investigation_note || "No generated note available."}</p>
           </div>
         </div>
 

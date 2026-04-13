@@ -46,6 +46,61 @@ def test_alerts_investigate_raises_404(monkeypatch):
     assert exc.value.detail == "Alert not found"
 
 
+def test_alerts_investigate_builds_rich_llm_context(monkeypatch):
+    captured_case_data = {}
+
+    async def fake_get_alert_by_id(alert_id: str):
+        return {
+            "id": alert_id,
+            "account_id": "ACC-CTX-1",
+            "transaction_id": "TXN-CTX-1",
+            "risk_score": 92,
+            "risk_level": "CRITICAL",
+            "recommendation": "BLOCK",
+            "rule_flags": ["RAPID_LAYERING", "MULE_NETWORK"],
+            "shap_top3": ["amount_log: 13.1", "channel_risk: 0.55"],
+            "primary_fraud_type": "MULE_NETWORK",
+        }
+
+    async def fake_get_account_subgraph(account_id: str, hops: int = 2):
+        return {
+            "nodes": [{"id": account_id}, {"id": "ACC-CP-1"}],
+            "edges": [{"source": account_id, "target": "ACC-CP-1"}],
+        }
+
+    async def fake_get_transaction(txn_id: str):
+        return {
+            "txn_id": txn_id,
+            "amount": 780000,
+            "channel": "RTGS",
+            "from_account": "ACC-CTX-1",
+            "to_account": "ACC-CP-1",
+            "timestamp": "2026-03-07T10:39:00Z",
+            "scoring_source": "ml_blended",
+            "model_version": "test-model-v1",
+        }
+
+    async def fake_summarize_case(case_data: dict):
+        captured_case_data.update(case_data)
+        return "Detailed investigator note"
+
+    monkeypatch.setattr(alerts.neo4j_service, "get_alert_by_id", fake_get_alert_by_id)
+    monkeypatch.setattr(
+        alerts.neo4j_service, "get_account_subgraph", fake_get_account_subgraph
+    )
+    monkeypatch.setattr(alerts.neo4j_service, "get_transaction", fake_get_transaction)
+    monkeypatch.setattr(alerts.llm_service, "summarize_case", fake_summarize_case)
+
+    payload = asyncio.run(alerts.investigate_alert("ALT-CTX-1", 2))
+
+    assert payload["investigation_note"] == "Detailed investigator note"
+    assert captured_case_data["account_id"] == "ACC-CTX-1"
+    assert captured_case_data["risk_level"] == "CRITICAL"
+    assert captured_case_data["rule_violations"] == ["RAPID_LAYERING", "MULE_NETWORK"]
+    assert "txn_id=TXN-CTX-1" in captured_case_data["transaction_snapshot"]
+    assert "linked_accounts" in captured_case_data["graph_summary"]
+
+
 def test_accounts_profile_raises_404(monkeypatch):
     class FakeResult:
         async def single(self):
@@ -88,6 +143,9 @@ def test_generate_str_raises_500_on_persistence_failure(monkeypatch):
     async def fake_get_account_subgraph(account_id: str, hops: int = 2):
         return {"nodes": [{"id": account_id}], "edges": []}
 
+    async def fake_get_transaction(_txn_id: str):
+        return None
+
     async def fake_generate_str_narrative(case_data: dict):
         return f"Narrative for {case_data['account_id']}"
 
@@ -100,6 +158,7 @@ def test_generate_str_raises_500_on_persistence_failure(monkeypatch):
         "get_account_subgraph",
         fake_get_account_subgraph,
     )
+    monkeypatch.setattr(reports.neo4j_service, "get_transaction", fake_get_transaction)
     monkeypatch.setattr(
         reports.llm_service,
         "generate_str_narrative",

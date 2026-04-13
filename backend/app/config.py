@@ -40,7 +40,8 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "groq"
     GROQ_API_KEY: str = ""
     LLM_MODEL: str = "llama-3.1-70b-versatile"
-    GROQ_API_URL: str = "https://api.groq.com/openai/v1/chat/completions"
+    LLM_URL: str = "https://api.groq.com/openai/v1"
+    GROQ_API_URL: str = ""
 
     FINACLE_API_URL: str = ""
     FINACLE_CLIENT_ID: str = ""
