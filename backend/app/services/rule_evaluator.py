@@ -37,18 +37,26 @@ class PythonRuleEvaluator:
 
         if amount > 500000:
             risk_score += 20
-            shap_contributions.append(f"high_amount_₹{amount / 100000:.1f}L: +20")
+            shap_contributions.append(
+                f"High transfer amount (₹{amount / 100000:.1f}L): +20"
+            )
         elif amount > 100000:
             risk_score += 10
-            shap_contributions.append(f"elevated_amount_₹{amount / 100000:.1f}L: +10")
+            shap_contributions.append(
+                f"Elevated transfer amount (₹{amount / 100000:.1f}L): +10"
+            )
 
         if velocity_1h >= 5:
             risk_score += 25
             rule_violations.append("RAPID_LAYERING")
-            shap_contributions.append(f"velocity_1h_{velocity_1h}_txns: +25")
+            shap_contributions.append(
+                f"High 1-hour transaction velocity ({velocity_1h} txns): +25"
+            )
         elif velocity_1h >= 3:
             risk_score += 12
-            shap_contributions.append(f"elevated_velocity_1h_{velocity_1h}: +12")
+            shap_contributions.append(
+                f"Elevated 1-hour transaction velocity ({velocity_1h} txns): +12"
+            )
 
         # High-value transfers moving with bursty velocity indicate layering.
         if amount >= 500000 and velocity_1h >= 2 and not is_dormant:
@@ -56,13 +64,13 @@ class PythonRuleEvaluator:
             if "RAPID_LAYERING" not in rule_violations:
                 rule_violations.append("RAPID_LAYERING")
             shap_contributions.append(
-                f"high_value_multi_hop_velocity_1h_{velocity_1h}: +40"
+                f"High-value multi-hop burst ({velocity_1h} txns in 1h): +40"
             )
 
         if 800000 <= amount <= 990000:
             risk_score += 22
             rule_violations.append("STRUCTURING")
-            shap_contributions.append("amount_near_ctr_threshold: +22")
+            shap_contributions.append("Amount near CTR reporting threshold: +22")
 
         # Smurfing signal for repeated sub-threshold transfers in a day.
         if 40000 <= amount < 50000 and velocity_24h >= 3:
@@ -71,38 +79,40 @@ class PythonRuleEvaluator:
             if "STRUCTURING" not in rule_violations:
                 rule_violations.append("STRUCTURING")
             shap_contributions.append(
-                f"repeated_sub_threshold_transfers_{velocity_24h}_in_24h: +{structuring_boost}"
+                f"Repeated sub-threshold transfers ({velocity_24h} in 24h): +{structuring_boost}"
             )
 
         if is_dormant:
             risk_score += 45
             rule_violations.append("DORMANT_AWAKENING")
-            shap_contributions.append("dormant_account_activity: +45")
+            shap_contributions.append("Dormant account reactivation: +45")
 
         if device_account_count > 3:
             risk_score += 30
             rule_violations.append("MULE_NETWORK")
             shap_contributions.append(
-                f"device_shared_{device_account_count}_accounts: +30"
+                f"Shared device across {device_account_count} accounts: +30"
             )
 
         if channel in ["CASH", "SWIFT"]:
             risk_score += 8
-            shap_contributions.append(f"high_risk_channel_{channel}: +8")
+            shap_contributions.append(f"High-risk channel usage ({channel}): +8")
 
         # Round-tripping marker used by synthetic and replay ingestion flows.
         if (from_account and to_account and from_account == to_account) or round_trip_marker:
             risk_score += 35
             if "ROUND_TRIPPING" not in rule_violations:
                 rule_violations.append("ROUND_TRIPPING")
-            shap_contributions.append("round_tripping_pattern: +35")
+            shap_contributions.append("Round-tripping movement pattern: +35")
             if amount >= 250000:
                 risk_score += 15
-                shap_contributions.append("high_value_round_trip: +15")
+                shap_contributions.append("High-value round-trip amount: +15")
 
         if velocity_24h >= 10:
             risk_score += 15
-            shap_contributions.append(f"velocity_24h_{velocity_24h}_txns: +15")
+            shap_contributions.append(
+                f"High 24-hour transaction velocity ({velocity_24h} txns): +15"
+            )
 
         return RuleEvaluation(
             risk_score=risk_score,

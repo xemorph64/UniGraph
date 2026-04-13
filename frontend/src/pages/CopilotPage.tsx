@@ -11,6 +11,7 @@ import {
   type AlertCardLike,
   type InvestigationResponse,
 } from "@/lib/unigraph-api";
+import { toShapSummaryLines } from "@/lib/shap-explain";
 import { toast } from "sonner";
 
 interface Message {
@@ -53,7 +54,7 @@ function buildFacts(alert: AlertCardLike | undefined, investigation: Investigati
   const graphEdgeCount = investigation?.graph?.edges?.length || 0;
   facts.push(`Linked graph neighborhood: ${graphNodeCount} nodes, ${graphEdgeCount} edges`);
 
-  const shapReasons = (investigation?.alert?.shap_top3 || []).slice(0, 2);
+  const shapReasons = toShapSummaryLines(investigation?.alert?.shap_top3, 2);
   if (shapReasons.length) {
     facts.push(`Top explainers: ${shapReasons.join(" | ")}`);
   }
@@ -73,6 +74,8 @@ function getResponse(params: {
   const graphNodeCount = investigation?.graph?.nodes?.length || 0;
   const graphEdgeCount = investigation?.graph?.edges?.length || 0;
   const ruleFlags = (investigation?.alert?.rule_flags || []).map(prettifyFlag);
+  const shapSummary = toShapSummaryLines(investigation?.alert?.shap_top3, 3);
+  const evidence = [...ruleFlags, ...shapSummary].slice(0, 4);
   const keyAccounts = (investigation?.graph?.nodes || [])
     .map((node) => String(node.id || ""))
     .filter(Boolean)
@@ -85,11 +88,11 @@ function getResponse(params: {
   if (query.includes("str") || query.includes("file") || query.includes("report") || query.includes("should i")) {
     const shouldFile = alert.riskScore >= 60;
     const filing = shouldFile ? "STR filing is recommended" : "STR filing can be deferred unless additional suspicious activity appears";
-    return `${filing}.\n\nReasoning:\n1. Current risk score is ${alert.riskScore} (${getRiskLabel(alert.riskScore)}).\n2. Pattern detected: ${alert.fraudType}.\n3. Rule/SHAP evidence: ${ruleFlags.concat(investigation?.alert?.shap_top3 || []).slice(0, 3).join(" | ") || "Pattern-based detection"}.\n4. Historical STRs for this account: ${strCountForAccount}.\n\nYou can open STR Generator directly for this alert.`;
+    return `${filing}.\n\nReasoning:\n1. Current risk score is ${alert.riskScore} (${getRiskLabel(alert.riskScore)}).\n2. Pattern detected: ${alert.fraudType}.\n3. Rule/SHAP evidence: ${evidence.join(" | ") || "Pattern-based detection"}.\n4. Historical STRs for this account: ${strCountForAccount}.\n\nYou can open STR Generator directly for this alert.`;
   }
 
   if (query.includes("pattern") || query.includes("typology") || query.includes("what is")) {
-    return `Pattern Analysis\n\nDetected typology: ${alert.fraudType}\nRule flags: ${ruleFlags.join(", ") || "Not returned"}\nRecommended action: ${alert.recommendedAction}\n\nSignal explanation:\n${(investigation?.alert?.shap_top3 || []).join("\n") || "No SHAP contributors returned."}`;
+    return `Pattern Analysis\n\nDetected typology: ${alert.fraudType}\nRule flags: ${ruleFlags.join(", ") || "Not returned"}\nRecommended action: ${alert.recommendedAction}\n\nSignal explanation:\n${shapSummary.length ? shapSummary.map((line) => `- ${line}`).join("\n") : "No SHAP contributors returned."}`;
   }
 
   if (query.includes("account") || query.includes("who") || query.includes("key")) {
@@ -97,7 +100,7 @@ function getResponse(params: {
   }
 
   if (query.includes("risk") || query.includes("score") || query.includes("level")) {
-    return `Risk Assessment\n\nScore: ${alert.riskScore}/100 (${getRiskLabel(alert.riskScore)})\nStatus: ${alert.status}\nRecommendation: ${alert.recommendedAction}\n\nTop drivers:\n${(investigation?.alert?.shap_top3 || []).slice(0, 3).join("\n") || "No explainability payload available."}`;
+    return `Risk Assessment\n\nScore: ${alert.riskScore}/100 (${getRiskLabel(alert.riskScore)})\nStatus: ${alert.status}\nRecommendation: ${alert.recommendedAction}\n\nTop drivers:\n${shapSummary.length ? shapSummary.map((line) => `- ${line}`).join("\n") : "No explainability payload available."}`;
   }
 
   if (query.includes("similar") || query.includes("past") || query.includes("cases")) {

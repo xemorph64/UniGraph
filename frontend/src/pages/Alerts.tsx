@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/src/lib/utils";
+import { formatImpactPoints, parseShapReasons } from "@/lib/shap-explain";
 
 interface Alert {
   id: string;
@@ -49,7 +50,32 @@ function getSeverityProgress(riskLevel: string) {
   return "bg-yellow-400";
 }
 
+function prettifyFlag(flag: string): string {
+  return flag
+    .toLowerCase()
+    .split("_")
+    .map((chunk) => chunk.charAt(0).toUpperCase() + chunk.slice(1))
+    .join(" ");
+}
+
 const AlertRow: React.FC<AlertRowProps> = ({ alert, isExpanded, onToggle }) => {
+  const shapReasons = parseShapReasons(alert.shap_top3);
+  const maxShapImpact = Math.max(
+    1,
+    ...shapReasons.map((reason) => (reason.impact === null ? 0 : Math.abs(reason.impact))),
+  );
+  const totalShapImpact = shapReasons.reduce((sum, reason) => sum + (reason.impact || 0), 0);
+
+  const explanationRows = shapReasons.length
+    ? shapReasons.slice(0, 5)
+    : (alert.rule_flags || []).slice(0, 5).map((flag) => ({
+        raw: flag,
+        driver: prettifyFlag(flag),
+        impact: null,
+        direction: "neutral" as const,
+        detail: "Rule-based trigger",
+      }));
+
   return (
     <>
       <tr 
@@ -85,14 +111,52 @@ const AlertRow: React.FC<AlertRowProps> = ({ alert, isExpanded, onToggle }) => {
                 <div className="col-span-7 bg-surface-container-low p-6 rounded-xl border border-outline-variant/10">
                   <div className="flex items-center justify-between mb-6">
                     <h3 className="text-sm font-black uppercase tracking-widest text-primary flex items-center gap-2"><Brain className="w-4 h-4" />Risk Analysis</h3>
-                    <span className="text-[10px] text-on-surface-variant font-medium">Rule-Based Scoring</span>
+                    <span className="text-[10px] text-on-surface-variant font-medium">
+                      {shapReasons.some((reason) => reason.impact !== null)
+                        ? `Total ${formatImpactPoints(totalShapImpact)}`
+                        : "Dynamic SHAP drivers"}
+                    </span>
                   </div>
-                  <div className="space-y-4">
-                    {(alert.shap_top3 || alert.rule_flags || []).slice(0, 5).map((item, idx) => (
-                      <div key={idx} className="flex items-center justify-between p-3 bg-surface-container-highest rounded-lg">
-                        <span className="text-xs text-on-surface-variant">{item}</span>
+                  <div className="space-y-3">
+                    {explanationRows.length === 0 ? (
+                      <div className="p-3 bg-surface-container-highest rounded-lg text-xs text-on-surface-variant">
+                        No SHAP explanation payload returned for this alert.
                       </div>
-                    ))}
+                    ) : (
+                      explanationRows.map((reason, idx) => (
+                        <div key={`${reason.raw || reason.driver}-${idx}`} className="p-3 bg-surface-container-highest rounded-lg">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-xs text-on-surface-variant">
+                              <span className="text-[10px] font-bold text-primary mr-1.5">#{idx + 1}</span>
+                              {reason.driver}
+                            </span>
+                            {reason.impact !== null && (
+                              <span
+                                className={cn(
+                                  "text-[10px] font-bold px-1.5 py-0.5 rounded",
+                                  reason.direction === "increase" ? "bg-error/15 text-error" : "bg-primary/15 text-primary",
+                                )}
+                              >
+                                {formatImpactPoints(reason.impact)}
+                              </span>
+                            )}
+                          </div>
+
+                          {reason.impact !== null && (
+                            <div className="mt-2 h-1.5 rounded-full bg-surface-container-low overflow-hidden">
+                              <div
+                                className={cn("h-full rounded-full", reason.direction === "increase" ? "bg-error" : "bg-primary")}
+                                style={{ width: `${Math.max(12, (Math.abs(reason.impact) / maxShapImpact) * 100)}%` }}
+                              />
+                            </div>
+                          )}
+
+                          {reason.detail && (
+                            <p className="mt-1 text-[10px] text-on-surface-variant">{reason.detail}</p>
+                          )}
+                        </div>
+                      ))
+                    )}
                   </div>
                   <p className="mt-6 text-xs text-on-surface-variant leading-relaxed bg-surface-container-highest/30 p-3 rounded-lg border-l-2 border-primary">
                     <strong>Recommendation:</strong> {alert.recommendation}

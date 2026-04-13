@@ -4,6 +4,7 @@ import { ArrowLeft, Download, FileText, Info } from "lucide-react";
 import RiskScoreBar, { getRiskColor, getRiskLabel } from "@/components/RiskScoreBar";
 import LiveGraph from "@/components/LiveGraph";
 import { investigateAlert, type InvestigationResponse } from "@/lib/unigraph-api";
+import { formatImpactPoints, parseShapReasons } from "@/lib/shap-explain";
 import { toast } from "sonner";
 
 function prettifyFlag(flag: string): string {
@@ -83,7 +84,12 @@ export default function GraphExplorer() {
       })
       .filter((node): node is NonNullable<typeof node> => Boolean(node));
 
-    const reasons = (alert.shap_top3 || []).filter(Boolean);
+    const shapReasons = parseShapReasons(alert.shap_top3);
+    const maxShapImpact = Math.max(
+      1,
+      ...shapReasons.map((reason) => (reason.impact === null ? 0 : Math.abs(reason.impact))),
+    );
+    const totalShapImpact = shapReasons.reduce((sum, reason) => sum + (reason.impact || 0), 0);
 
     return {
       alert,
@@ -91,7 +97,9 @@ export default function GraphExplorer() {
       riskScore,
       fraudType,
       accounts,
-      reasons,
+      shapReasons,
+      maxShapImpact,
+      totalShapImpact,
     };
   }, [payload]);
 
@@ -208,14 +216,53 @@ export default function GraphExplorer() {
           </div>
 
           <div className="bg-card border border-border rounded-[10px] p-4">
-            <div className="flex items-center gap-1.5 mb-3">
-              <span className="text-xs font-semibold text-foreground uppercase tracking-wide">Why was this flagged?</span>
-              <Info className="w-3.5 h-3.5 text-muted-foreground" />
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-semibold text-foreground uppercase tracking-wide">SHAP Explanation</span>
+                <Info className="w-3.5 h-3.5 text-muted-foreground" />
+              </div>
+              {model.shapReasons.some((reason) => reason.impact !== null) && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-foreground font-semibold">
+                  Total {formatImpactPoints(model.totalShapImpact)}
+                </span>
+              )}
             </div>
-            <div className="space-y-1.5">
-              {(model.reasons.length ? model.reasons : ["No SHAP reasons returned by backend"]).map((reason, index) => (
-                <p key={`${reason}-${index}`} className="text-[11px] text-muted-foreground leading-relaxed">• {reason}</p>
-              ))}
+            <p className="text-[10px] text-muted-foreground mb-3">Top model drivers behind this alert score.</p>
+            <div className="space-y-2">
+              {(model.shapReasons.length
+                ? model.shapReasons
+                : [{ raw: "", driver: "No SHAP explanation returned by backend", impact: null, direction: "neutral" as const }]).map(
+                (reason, index) => (
+                  <div key={`${reason.raw || reason.driver}-${index}`} className="rounded-md border border-border/60 bg-muted/20 p-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-[11px] text-foreground leading-relaxed">
+                        <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-muted text-[10px] font-semibold mr-1.5">
+                          {index + 1}
+                        </span>
+                        {reason.driver}
+                      </p>
+                      {reason.impact !== null && (
+                        <span
+                          className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${reason.direction === "increase" ? "bg-rose-100 text-rose-700" : "bg-sky-100 text-sky-700"}`}
+                        >
+                          {formatImpactPoints(reason.impact)}
+                        </span>
+                      )}
+                    </div>
+
+                    {reason.impact !== null && (
+                      <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${reason.direction === "increase" ? "bg-rose-500" : "bg-sky-500"}`}
+                          style={{ width: `${Math.max(12, (Math.abs(reason.impact) / model.maxShapImpact) * 100)}%` }}
+                        />
+                      </div>
+                    )}
+
+                    {reason.detail && <p className="mt-1 text-[10px] text-muted-foreground">{reason.detail}</p>}
+                  </div>
+                ),
+              )}
             </div>
           </div>
 

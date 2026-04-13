@@ -10,6 +10,7 @@ import {
   toAlertCard,
   type AlertCardLike,
 } from "@/lib/unigraph-api";
+import { formatImpactPoints, parseShapReasons, type ParsedShapReason } from "@/lib/shap-explain";
 
 type Priority = "CRITICAL" | "HIGH" | "MEDIUM";
 type StatusType = "OPEN" | "UNDER REVIEW" | "STR FILED";
@@ -28,6 +29,7 @@ interface AlertItem {
   strDeadlineDays: number;
   scoringSource?: string;
   modelVersion?: string;
+  shapReasons: ParsedShapReason[];
 }
 
 function formatScoringSource(value?: string) {
@@ -60,6 +62,7 @@ function toAlertItem(
   index: number,
   scoringSource?: string,
   modelVersion?: string,
+  shapReasons: ParsedShapReason[] = [],
 ): AlertItem {
   return {
     id: card.id,
@@ -75,6 +78,7 @@ function toAlertItem(
     strDeadlineDays: Math.max(1, 10 - index),
     scoringSource,
     modelVersion,
+    shapReasons,
   };
 }
 
@@ -149,7 +153,8 @@ export default function AlertsQueue() {
       const mapped = alertResp.items.map((alert, index) => {
         const txn = txnById.get(alert.transaction_id);
         const card = toAlertCard(alert, txn);
-        return toAlertItem(card, index, txn?.scoring_source, txn?.model_version);
+        const shapReasons = parseShapReasons(alert.shap_top3).slice(0, 3);
+        return toAlertItem(card, index, txn?.scoring_source, txn?.model_version, shapReasons);
       });
       setAlerts(mapped);
       setError(null);
@@ -178,10 +183,22 @@ export default function AlertsQueue() {
         }
         try {
           const txn = incomingAlert.transaction_id ? await getTransaction(incomingAlert.transaction_id) : undefined;
-          const item = toAlertItem(toAlertCard(incomingAlert, txn), 0, txn?.scoring_source, txn?.model_version);
+          const item = toAlertItem(
+            toAlertCard(incomingAlert, txn),
+            0,
+            txn?.scoring_source,
+            txn?.model_version,
+            parseShapReasons(incomingAlert.shap_top3).slice(0, 3),
+          );
           setAlerts((prev) => [item, ...prev.filter((a) => a.id !== item.id)]);
         } catch {
-          const item = toAlertItem(toAlertCard(incomingAlert), 0);
+          const item = toAlertItem(
+            toAlertCard(incomingAlert),
+            0,
+            undefined,
+            undefined,
+            parseShapReasons(incomingAlert.shap_top3).slice(0, 3),
+          );
           setAlerts((prev) => [item, ...prev.filter((a) => a.id !== item.id)]);
         }
       },
@@ -314,6 +331,7 @@ export default function AlertsQueue() {
         )}
         {filtered.map((a) => {
           const pStyle = priorityBadgeStyle[a.priority];
+          const shapReasonList = a.shapReasons || [];
           return (
             <div
               key={a.id}
@@ -374,6 +392,24 @@ export default function AlertsQueue() {
                     <span className="text-[11px] text-muted-foreground truncate block" title={a.modelVersion}>
                       Model: {a.modelVersion}
                     </span>
+                  )}
+                  {shapReasonList.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {shapReasonList.slice(0, 2).map((reason, idx) => {
+                        const label = reason.impact === null
+                          ? reason.driver
+                          : `${reason.driver} (${formatImpactPoints(reason.impact)})`;
+                        return (
+                          <span
+                            key={`${reason.raw}-${idx}`}
+                            className="text-[10px] px-2 py-0.5 rounded border border-border bg-muted/40 text-foreground"
+                            title={label}
+                          >
+                            {label}
+                          </span>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
 

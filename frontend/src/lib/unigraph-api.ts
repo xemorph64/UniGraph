@@ -1,4 +1,5 @@
 import type { Transaction } from "@/data/transactions";
+import { toShapSummaryLines } from "@/lib/shap-explain";
 
 export interface BackendTransaction {
   id: string;
@@ -352,6 +353,7 @@ export function toUiTransaction(txn: BackendTransaction): Transaction {
 export function toAlertCard(alert: BackendAlert, txn?: BackendTransaction): AlertCardLike {
   const flags = (alert.rule_flags || []).map(prettifyFlag);
   const type = alert.fraud_type || alert.primary_fraud_type || deriveFraudType(alert.rule_flags || [], alert.primary_fraud_type);
+  const shapSummary = toShapSummaryLines(alert.shap_top3, 2).join(" + ");
 
   return {
     id: alert.id,
@@ -361,7 +363,7 @@ export function toAlertCard(alert: BackendAlert, txn?: BackendTransaction): Aler
     riskScore: Math.round(alert.risk_score || alert.ensemble_score || 0),
     channel: txn?.channel || "-",
     timeDetected: formatTimestamp(alert.created_at || alert.alert_timestamp),
-    shapReason: (alert.shap_top3 || []).join(" + ") || "Pattern-based risk detection",
+    shapReason: shapSummary || "Pattern-based risk detection",
     description: alert.recommendation || `${type} signal triggered by risk engine`,
     recommendedAction: alert.recommendation || "Investigate alert",
     status: alert.status || "OPEN",
