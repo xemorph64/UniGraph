@@ -85,6 +85,17 @@ data/*.parquet
 logs/
 *.tmp
 
+# Generated ingestion and benchmark artifacts
+tmp_*.py
+tmp_*.sql
+tmp_*.json
+ingestion/benchmark-results-*.json
+ingestion/enriched-sample.jsonl
+ingest_fraud_scenarios_report.json
+ingest_transactions_input_report.json
+ingest_transactions_input_ml_report.json
+!ingest_transactions_input_ml_report_current.json
+
 # Secrets - NEVER commit
 *.pem
 *.key

@@ -38,33 +38,25 @@ Important operational detail:
 
 ## 3) Input Datasets and Shapes
 
-### 3.1 Scenario SQL (simplified AML schema)
+### 3.1 Scenario SQL (active datasets)
 
 Primary files:
 
 - fraud_scenarios.sql
-- dataset_550.sql
-- dataset_550_normal_txns.sql
+- dataset_100_interconnected_txns.sql
 
-Key tables used by these files:
+Key table shapes in active use:
 
-- accounts
-- transactions
-- alerts
+- fraud_scenarios.sql: accounts, transactions, alerts
+- dataset_100_interconnected_txns.sql: transactions_input
 
-The transactions table in these SQL files uses sender_account, receiver_account, amount, channel, txn_timestamp, device_id, narration, etc.
+The active SQL paths cover both deterministic scenario replay and input-schema replay through the backend ingest API.
 
-### 3.2 Wide synthetic dataset (legacy/wide schema)
+### 3.2 Legacy wide synthetic dataset status
 
-Primary files:
+Legacy wide-schema transaction artifacts were removed from the active runtime path during repository cleanup.
 
-- transactions_dataset.csv
-- transactions_inserts.sql
-- UniGRAPH_SQL_Transaction_Dataset_Structure.md
-
-These include fields like transaction_event_type, reference_txn_id, txn_status, risk_score, ml_score, is_flagged, is_fraud, fraud_type.
-
-This wide schema does not directly match the backend ingest contract, so mapping/feature synthesis is required in scripts.
+Use the active SQL datasets above for ingestion, validation, and frontend verification flows.
 
 ---
 
@@ -457,7 +449,8 @@ This defines constraints/indexes for Account, Transaction, Alert, Case, STRRepor
 
 - scripts/ingest_sql_transactions.py (legacy guard requires --allow-legacy)
 - scripts/simulate_transactions.py (legacy guard requires --allow-legacy)
-- verify_pipeline_integrity.py (older utility script, not aligned with current runtime contracts)
+
+Note: older wide-schema verification artifacts were removed from the current repository state.
 
 ---
 
