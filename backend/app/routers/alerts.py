@@ -28,10 +28,14 @@ async def list_alerts(
     page_size: int = Query(50, ge=1, le=500),
     status: Optional[str] = None,
     min_risk_score: Optional[int] = None,
+    transaction_id_prefix: Optional[str] = None,
 ):
     """List alerts with pagination and filters."""
     alerts = await neo4j_service.get_alerts(
-        status=status, min_risk_score=min_risk_score, limit=page_size
+        status=status,
+        min_risk_score=min_risk_score,
+        transaction_id_prefix=transaction_id_prefix,
+        limit=page_size,
     )
     return {"items": alerts, "page": page, "page_size": page_size, "total": len(alerts)}
 

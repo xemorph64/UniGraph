@@ -232,6 +232,7 @@ class FraudScorer:
                     datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 )
             ),
+            "scoring_source": "ml_blended",
         }
 
     @staticmethod
@@ -250,6 +251,7 @@ class FraudScorer:
             "scoring_timestamp": datetime.now(timezone.utc).isoformat().replace(
                 "+00:00", "Z"
             ),
+            "scoring_source": "rules_fallback",
         }
 
     @staticmethod
@@ -413,6 +415,7 @@ class FraudScorer:
             shap_top3 = blended["shap_top3"]
             model_version = blended["model_version"]
             scoring_timestamp = blended["scoring_timestamp"]
+            scoring_source = blended["scoring_source"]
             logger.info(
                 "ml_service_score_applied",
                 txn_id=txn.get("txn_id"),
@@ -434,6 +437,7 @@ class FraudScorer:
             shap_top3 = fallback["shap_top3"]
             model_version = fallback["model_version"]
             scoring_timestamp = fallback["scoring_timestamp"]
+            scoring_source = fallback["scoring_source"]
 
         risk_level, recommendation = self._risk_level_and_recommendation(risk_score)
 
@@ -452,6 +456,7 @@ class FraudScorer:
             "xgboost_risk_score": xgboost_risk_score,
             "model_version": model_version,
             "scoring_timestamp": scoring_timestamp,
+            "scoring_source": scoring_source,
             "graph_features": graph_features,
         }
 

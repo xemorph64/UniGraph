@@ -1,6 +1,6 @@
 from typing import Optional
 from fastapi import APIRouter, Query, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uuid
 from datetime import datetime
 
@@ -29,6 +29,25 @@ class TransactionResponse(BaseModel):
     if_anomaly_score: Optional[float] = None
     xgboost_risk_score: Optional[int] = None
     model_version: Optional[str] = None
+    scoring_source: Optional[str] = None
+
+
+class TransactionNodeResponse(BaseModel):
+    id: str
+    from_account: str
+    to_account: str
+    amount: float
+    channel: str
+    timestamp: str
+    risk_score: float = 0
+    is_flagged: bool = False
+    rule_violations: list[str] = Field(default_factory=list)
+    primary_fraud_type: Optional[str] = None
+    gnn_fraud_probability: Optional[float] = None
+    if_anomaly_score: Optional[float] = None
+    xgboost_risk_score: Optional[int] = None
+    model_version: Optional[str] = None
+    scoring_source: Optional[str] = None
 
 
 class TransactionIngest(BaseModel):
@@ -68,7 +87,7 @@ class TransactionIngest(BaseModel):
     amount_zscore: Optional[float] = None
 
 
-@router.get("/{txn_id}", response_model=TransactionResponse)
+@router.get("/{txn_id}", response_model=TransactionNodeResponse)
 async def get_transaction(txn_id: str):
     """Get transaction details with SHAP explanation."""
     txn = await neo4j_service.get_transaction(txn_id)
@@ -84,6 +103,7 @@ async def list_transactions(
     account_id: Optional[str] = None,
     channel: Optional[str] = None,
     min_risk_score: Optional[float] = Query(None, ge=0, le=100),
+    txn_id_prefix: Optional[str] = None,
 ):
     """List transactions with pagination and filters."""
     result = await neo4j_service.get_transactions(
@@ -92,6 +112,7 @@ async def list_transactions(
         account_id=account_id,
         channel=channel,
         min_risk_score=min_risk_score,
+        txn_id_prefix=txn_id_prefix,
     )
     return {
         "items": result["items"],
@@ -116,6 +137,11 @@ async def ingest_transaction(txn: TransactionIngest):
     txn_dict["rule_violations"] = score_result["rule_violations"]
     txn_dict["primary_fraud_type"] = score_result.get("primary_fraud_type")
     txn_dict["is_flagged"] = score_result["risk_score"] >= 60
+    txn_dict["gnn_fraud_probability"] = score_result.get("gnn_fraud_probability")
+    txn_dict["if_anomaly_score"] = score_result.get("if_anomaly_score")
+    txn_dict["xgboost_risk_score"] = score_result.get("xgboost_risk_score")
+    txn_dict["model_version"] = score_result.get("model_version")
+    txn_dict["scoring_source"] = score_result.get("scoring_source")
 
     await neo4j_service.upsert_account(
         txn.from_account,
@@ -184,4 +210,5 @@ async def ingest_transaction(txn: TransactionIngest):
         if_anomaly_score=score_result.get("if_anomaly_score"),
         xgboost_risk_score=score_result.get("xgboost_risk_score"),
         model_version=score_result.get("model_version"),
+        scoring_source=score_result.get("scoring_source"),
     )

@@ -88,3 +88,74 @@ def test_primary_fraud_type_is_none_when_no_typology_rules_fire():
 
     assert result["rule_violations"] == []
     assert result["primary_fraud_type"] is None
+
+
+def test_score_transaction_marks_ml_blended_source(monkeypatch):
+    async def fake_graph_features(_txn):
+        return {}
+
+    async def fake_graph_subgraph(_txn):
+        return None
+
+    async def fake_ml_result(_txn, _rule_violations, graph_features=None, graph_subgraph=None):
+        return {
+            "gnn_fraud_probability": 0.81,
+            "if_anomaly_score": 0.22,
+            "xgboost_risk_score": 72,
+            "shap_top3": ["amount_log", "velocity_1h", "pagerank"],
+            "model_version": "test-ml-v1",
+            "timestamp": "2026-04-13T00:00:00Z",
+        }
+
+    monkeypatch.setattr(fraud_scorer, "_build_graph_features", fake_graph_features)
+    monkeypatch.setattr(fraud_scorer, "_build_graph_subgraph", fake_graph_subgraph)
+    monkeypatch.setattr(fraud_scorer, "_score_with_ml_service", fake_ml_result)
+
+    txn = {
+        "txn_id": "TXN-SOURCE-ML",
+        "from_account": "ACC-SOURCE-001",
+        "to_account": "ACC-SOURCE-002",
+        "amount": 120000.0,
+        "channel": "IMPS",
+        "velocity_1h": 1,
+        "velocity_24h": 1,
+        "is_dormant": False,
+        "device_account_count": 1,
+    }
+
+    result = asyncio.run(fraud_scorer.score_transaction(txn))
+
+    assert result["scoring_source"] == "ml_blended"
+    assert result["model_version"] == "test-ml-v1"
+
+
+def test_score_transaction_marks_rules_fallback_source(monkeypatch):
+    async def fake_graph_features(_txn):
+        return {}
+
+    async def fake_graph_subgraph(_txn):
+        return None
+
+    async def fake_ml_unavailable(_txn, _rule_violations, graph_features=None, graph_subgraph=None):
+        return None
+
+    monkeypatch.setattr(fraud_scorer, "_build_graph_features", fake_graph_features)
+    monkeypatch.setattr(fraud_scorer, "_build_graph_subgraph", fake_graph_subgraph)
+    monkeypatch.setattr(fraud_scorer, "_score_with_ml_service", fake_ml_unavailable)
+
+    txn = {
+        "txn_id": "TXN-SOURCE-FALLBACK",
+        "from_account": "ACC-SOURCE-003",
+        "to_account": "ACC-SOURCE-004",
+        "amount": 75000.0,
+        "channel": "UPI",
+        "velocity_1h": 1,
+        "velocity_24h": 1,
+        "is_dormant": False,
+        "device_account_count": 1,
+    }
+
+    result = asyncio.run(fraud_scorer.score_transaction(txn))
+
+    assert result["scoring_source"] == "rules_fallback"
+    assert result["model_version"] == "unigraph-demo-v1.0"

@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Search, Download, Flag, Check, Info } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import type { Transaction } from "@/data/transactions";
@@ -11,8 +11,22 @@ const CHANNELS = ["All", "UPI", "NEFT", "RTGS", "IMPS", "CASH", "Card"];
 const STATUSES = ["All", "Flagged", "Cleared", "Pending"];
 const DATE_RANGES = ["Today", "This Week", "This Month"];
 
+function formatScoringSource(value?: string) {
+  if (value === "ml_blended") return "ML Blended";
+  if (value === "rules_fallback") return "Rules Fallback";
+  return "Unknown";
+}
+
+function scoringSourceClass(value?: string) {
+  if (value === "ml_blended") return "bg-success/15 text-success border-success/30";
+  if (value === "rules_fallback") return "bg-warning/20 text-warning border-warning/30";
+  return "bg-muted text-muted-foreground border-border";
+}
+
 export default function TransactionMonitor() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const txnPrefix = searchParams.get("txnPrefix")?.trim() || "";
   const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +44,11 @@ export default function TransactionMonitor() {
 
   const loadTransactions = useCallback(async () => {
     try {
-      const resp = await listTransactions({ page: 1, pageSize: 500 });
+      const resp = await listTransactions({
+        page: 1,
+        pageSize: 500,
+        txnIdPrefix: txnPrefix || undefined,
+      });
       setAllTransactions(resp.items.map(toUiTransaction));
       setError(null);
     } catch (err) {
@@ -38,7 +56,7 @@ export default function TransactionMonitor() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [txnPrefix]);
 
   useEffect(() => {
     loadTransactions();
@@ -51,6 +69,7 @@ export default function TransactionMonitor() {
       "transaction-monitor-ui",
       async (alert) => {
         if (!alert.transaction_id) return;
+        if (txnPrefix && !alert.transaction_id.startsWith(txnPrefix)) return;
         try {
           const txn = await getTransaction(alert.transaction_id);
           const mapped = toUiTransaction(txn);
@@ -63,7 +82,7 @@ export default function TransactionMonitor() {
     );
 
     return disconnect;
-  }, []);
+  }, [txnPrefix]);
 
   const filtered = useMemo(() => {
     return allTransactions.filter((t) => {
@@ -106,6 +125,7 @@ export default function TransactionMonitor() {
         <h1 className="text-xl font-bold text-primary">Transaction Monitor</h1>
         <p className="text-xs text-muted-foreground mt-1">
           Real-time transaction surveillance · {wsConnected ? "Live stream connected" : "Polling mode"}
+          {txnPrefix ? ` · scope ${txnPrefix}` : ""}
         </p>
         {error && <p className="text-xs text-danger mt-1">{error}</p>}
       </div>
@@ -192,6 +212,7 @@ export default function TransactionMonitor() {
                 <th className="text-right p-2.5">Amount (₹)</th>
                 <th className="text-left p-2.5">Channel</th>
                 <th className="text-center p-2.5">Risk Score</th>
+                <th className="text-left p-2.5">Score Source</th>
                 <th className="text-left p-2.5">Flags</th>
                 <th className="text-left p-2.5">Status</th>
                 <th className="text-center p-2.5">Action</th>
@@ -200,7 +221,7 @@ export default function TransactionMonitor() {
             <tbody>
               {!loading && paged.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="p-4 text-center text-muted-foreground text-sm">
+                  <td colSpan={12} className="p-4 text-center text-muted-foreground text-sm">
                     No transactions match the current filters.
                   </td>
                 </tr>
@@ -223,6 +244,11 @@ export default function TransactionMonitor() {
                   <td className="p-2.5"><span className="bg-muted text-muted-foreground text-[10px] px-1.5 py-0.5 rounded">{t.channel}</span></td>
                   <td className="p-2.5">
                     <div className="flex justify-center"><RiskScoreBar score={t.riskScore} size="sm" /></div>
+                  </td>
+                  <td className="p-2.5">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${scoringSourceClass(t.scoringSource)}`}>
+                      {formatScoringSource(t.scoringSource)}
+                    </span>
                   </td>
                   <td className="p-2.5">
                     <div className="flex flex-wrap gap-0.5">
@@ -309,6 +335,13 @@ export default function TransactionMonitor() {
                   <div className="text-muted-foreground">Channel</div><div>{selected.channel}</div>
                   <div className="text-muted-foreground">Branch</div><div>{selected.branch}</div>
                   <div className="text-muted-foreground">Time</div><div>{selected.timestamp}</div>
+                  <div className="text-muted-foreground">Score Source</div>
+                  <div>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${scoringSourceClass(selected.scoringSource)}`}>
+                      {formatScoringSource(selected.scoringSource)}
+                    </span>
+                  </div>
+                  <div className="text-muted-foreground">Model Version</div><div className="truncate" title={selected.modelVersion || "-"}>{selected.modelVersion || "-"}</div>
                 </div>
 
                 {/* Risk Score */}

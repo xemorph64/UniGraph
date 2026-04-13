@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Search, ArrowRight } from "lucide-react";
 import RiskScoreBar, { getRiskColor } from "@/components/RiskScoreBar";
 import {
@@ -26,6 +26,20 @@ interface AlertItem {
   riskScore: number;
   status: StatusType;
   strDeadlineDays: number;
+  scoringSource?: string;
+  modelVersion?: string;
+}
+
+function formatScoringSource(value?: string) {
+  if (value === "ml_blended") return "ML Blended";
+  if (value === "rules_fallback") return "Rules Fallback";
+  return "Unknown";
+}
+
+function scoringSourceClass(value?: string) {
+  if (value === "ml_blended") return "bg-success/15 text-success border-success/30";
+  if (value === "rules_fallback") return "bg-warning/20 text-warning border-warning/30";
+  return "bg-muted text-muted-foreground border-border";
 }
 
 function getPriority(score: number): Priority {
@@ -41,7 +55,12 @@ function mapBackendStatus(status?: string): StatusType {
   return "UNDER REVIEW";
 }
 
-function toAlertItem(card: AlertCardLike, index: number): AlertItem {
+function toAlertItem(
+  card: AlertCardLike,
+  index: number,
+  scoringSource?: string,
+  modelVersion?: string,
+): AlertItem {
   return {
     id: card.id,
     account: card.account,
@@ -54,6 +73,8 @@ function toAlertItem(card: AlertCardLike, index: number): AlertItem {
     riskScore: card.riskScore,
     status: mapBackendStatus(card.status),
     strDeadlineDays: Math.max(1, 10 - index),
+    scoringSource,
+    modelVersion,
   };
 }
 
@@ -98,6 +119,8 @@ const fraudTypes = [
 
 export default function AlertsQueue() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const txnPrefix = searchParams.get("txnPrefix")?.trim() || "";
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -110,14 +133,23 @@ export default function AlertsQueue() {
   const loadAlerts = useCallback(async () => {
     try {
       const [alertResp, txnResp] = await Promise.all([
-        listAlerts({ page: 1, pageSize: 200 }),
-        listTransactions({ page: 1, pageSize: 500 }),
+        listAlerts({
+          page: 1,
+          pageSize: 200,
+          transactionIdPrefix: txnPrefix || undefined,
+        }),
+        listTransactions({
+          page: 1,
+          pageSize: 500,
+          txnIdPrefix: txnPrefix || undefined,
+        }),
       ]);
 
       const txnById = new Map(txnResp.items.map((txn) => [txn.id, txn]));
       const mapped = alertResp.items.map((alert, index) => {
-        const card = toAlertCard(alert, txnById.get(alert.transaction_id));
-        return toAlertItem(card, index);
+        const txn = txnById.get(alert.transaction_id);
+        const card = toAlertCard(alert, txn);
+        return toAlertItem(card, index, txn?.scoring_source, txn?.model_version);
       });
       setAlerts(mapped);
       setError(null);
@@ -126,7 +158,7 @@ export default function AlertsQueue() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [txnPrefix]);
 
   useEffect(() => {
     loadAlerts();
@@ -138,9 +170,15 @@ export default function AlertsQueue() {
     const disconnect = connectAlertsWebSocket(
       "alerts-queue-ui",
       async (incomingAlert) => {
+        if (txnPrefix) {
+          const transactionId = incomingAlert.transaction_id || "";
+          if (!transactionId.startsWith(txnPrefix)) {
+            return;
+          }
+        }
         try {
           const txn = incomingAlert.transaction_id ? await getTransaction(incomingAlert.transaction_id) : undefined;
-          const item = toAlertItem(toAlertCard(incomingAlert, txn), 0);
+          const item = toAlertItem(toAlertCard(incomingAlert, txn), 0, txn?.scoring_source, txn?.model_version);
           setAlerts((prev) => [item, ...prev.filter((a) => a.id !== item.id)]);
         } catch {
           const item = toAlertItem(toAlertCard(incomingAlert), 0);
@@ -151,7 +189,7 @@ export default function AlertsQueue() {
     );
 
     return disconnect;
-  }, []);
+  }, [txnPrefix]);
 
   const counts = useMemo(() => ({
     all: alerts.length,
@@ -192,6 +230,7 @@ export default function AlertsQueue() {
         <h1 className="text-xl font-bold text-primary">Alerts & Cases</h1>
         <p className="text-xs text-muted-foreground mt-1">
           {counts.all} alerts require attention · {criticalCount} critical · {highCount} high · {wsConnected ? "live" : "polling"}
+          {txnPrefix ? ` · scope ${txnPrefix}` : ""}
         </p>
         {error && <p className="text-xs text-danger mt-1">{error}</p>}
       </div>
@@ -300,6 +339,9 @@ export default function AlertsQueue() {
                 >
                   {a.priority}
                 </span>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${scoringSourceClass(a.scoringSource)}`}>
+                  {formatScoringSource(a.scoringSource)}
+                </span>
                 <span className="text-primary font-bold text-sm">{a.id}</span>
                 <span className="ml-auto mr-20 text-[11px] font-semibold px-2 py-0.5 rounded" style={{
                   color: fraudTypeColors[a.fraudType] || "hsl(var(--foreground))",
@@ -326,7 +368,14 @@ export default function AlertsQueue() {
 
               {/* Row 3 */}
               <div className="flex items-center justify-between gap-4">
-                <span className="text-muted-foreground text-xs italic truncate max-w-[50%]">{a.description}</span>
+                <div className="max-w-[60%]">
+                  <span className="text-muted-foreground text-xs italic truncate block">{a.description}</span>
+                  {a.modelVersion && (
+                    <span className="text-[11px] text-muted-foreground truncate block" title={a.modelVersion}>
+                      Model: {a.modelVersion}
+                    </span>
+                  )}
+                </div>
 
                 {/* STR Deadline */}
                 <span

@@ -140,7 +140,12 @@ class Neo4jService:
                     t.rule_violations = $rule_violations,
                     t.primary_fraud_type = $primary_fraud_type,
                     t.description = $description,
-                    t.device_id = $device_id
+                    t.device_id = $device_id,
+                    t.gnn_fraud_probability = $gnn_fraud_probability,
+                    t.if_anomaly_score = $if_anomaly_score,
+                    t.xgboost_risk_score = $xgboost_risk_score,
+                    t.model_version = $model_version,
+                    t.scoring_source = $scoring_source
                 ON MATCH SET
                     t.amount = $amount,
                     t.channel = $channel,
@@ -152,7 +157,12 @@ class Neo4jService:
                     t.rule_violations = $rule_violations,
                     t.primary_fraud_type = $primary_fraud_type,
                     t.description = $description,
-                    t.device_id = $device_id
+                    t.device_id = $device_id,
+                    t.gnn_fraud_probability = $gnn_fraud_probability,
+                    t.if_anomaly_score = $if_anomaly_score,
+                    t.xgboost_risk_score = $xgboost_risk_score,
+                    t.model_version = $model_version,
+                    t.scoring_source = $scoring_source
                 RETURN t
                 """,
                 txn_id=txn["txn_id"],
@@ -167,6 +177,11 @@ class Neo4jService:
                 primary_fraud_type=txn.get("primary_fraud_type"),
                 description=txn.get("description", ""),
                 device_id=txn.get("device_id", "unknown"),
+                gnn_fraud_probability=txn.get("gnn_fraud_probability"),
+                if_anomaly_score=txn.get("if_anomaly_score"),
+                xgboost_risk_score=txn.get("xgboost_risk_score"),
+                model_version=txn.get("model_version"),
+                scoring_source=txn.get("scoring_source"),
             )
             await session.run(
                 """
@@ -350,6 +365,7 @@ class Neo4jService:
         self,
         status: Optional[str] = None,
         min_risk_score: Optional[int] = None,
+        transaction_id_prefix: Optional[str] = None,
         limit: int = 50,
     ) -> list[dict]:
         filters = []
@@ -360,6 +376,9 @@ class Neo4jService:
         if min_risk_score is not None:
             filters.append("al.risk_score >= $min_risk_score")
             params["min_risk_score"] = float(min_risk_score)
+        if transaction_id_prefix:
+            filters.append("coalesce(al.transaction_id, '') STARTS WITH $transaction_id_prefix")
+            params["transaction_id_prefix"] = transaction_id_prefix
         where_clause = ("WHERE " + " AND ".join(filters)) if filters else ""
         async with self.driver.session() as session:
             result = await session.run(
@@ -423,6 +442,7 @@ class Neo4jService:
         account_id: Optional[str] = None,
         channel: Optional[str] = None,
         min_risk_score: Optional[float] = None,
+        txn_id_prefix: Optional[str] = None,
     ) -> dict:
         filters = []
         params: dict[str, Any] = {
@@ -440,6 +460,9 @@ class Neo4jService:
         if min_risk_score is not None:
             filters.append("coalesce(t.risk_score, 0) >= $min_risk_score")
             params["min_risk_score"] = float(min_risk_score)
+        if txn_id_prefix:
+            filters.append("t.id STARTS WITH $txn_id_prefix")
+            params["txn_id_prefix"] = txn_id_prefix
 
         where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
 

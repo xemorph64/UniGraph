@@ -11,6 +11,11 @@ export interface BackendTransaction {
   is_flagged?: boolean;
   rule_violations?: string[];
   primary_fraud_type?: string;
+  gnn_fraud_probability?: number;
+  if_anomaly_score?: number;
+  xgboost_risk_score?: number;
+  model_version?: string;
+  scoring_source?: string;
 }
 
 export interface BackendAlert {
@@ -119,12 +124,24 @@ export interface IngestTransactionResponse {
   primary_fraud_type?: string | null;
   is_flagged: boolean;
   alert_id?: string | null;
+  gnn_fraud_probability?: number;
+  if_anomaly_score?: number;
+  xgboost_risk_score?: number;
+  model_version?: string;
+  scoring_source?: string;
 }
 
 export interface BackendHealthResponse {
   status: string;
   version: string;
   neo4j: string;
+  fraud_scoring?: {
+    ml_service_reachable?: boolean;
+    ml_service_url?: string;
+    ml_model_version?: string | null;
+    fallback_mode_available?: boolean;
+    ml_error?: string;
+  };
   graph_stats?: {
     total_accounts?: number;
     total_transactions?: number;
@@ -327,6 +344,8 @@ export function toUiTransaction(txn: BackendTransaction): Transaction {
     status: riskStatus(score),
     flags: (txn.rule_violations || []).map(prettifyFlag),
     branch: "-",
+    scoringSource: txn.scoring_source,
+    modelVersion: txn.model_version,
   };
 }
 
@@ -356,6 +375,7 @@ export async function listTransactions(params?: {
   channel?: string;
   minRiskScore?: number;
   accountId?: string;
+  txnIdPrefix?: string;
 }) {
   const query = toQuery({
     page: params?.page || 1,
@@ -363,6 +383,7 @@ export async function listTransactions(params?: {
     channel: params?.channel,
     min_risk_score: params?.minRiskScore,
     account_id: params?.accountId,
+    txn_id_prefix: params?.txnIdPrefix,
   });
   return fetchJson<ListResponse<BackendTransaction>>(`/transactions?${query}`);
 }
@@ -376,12 +397,14 @@ export async function listAlerts(params?: {
   pageSize?: number;
   status?: string;
   minRiskScore?: number;
+  transactionIdPrefix?: string;
 }) {
   const query = toQuery({
     page: params?.page || 1,
     page_size: params?.pageSize || 50,
     status: params?.status,
     min_risk_score: params?.minRiskScore,
+    transaction_id_prefix: params?.transactionIdPrefix,
   });
   return fetchJson<ListResponse<BackendAlert>>(`/alerts?${query}`);
 }

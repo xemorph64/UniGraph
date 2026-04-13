@@ -10,4 +10,6 @@ export interface Transaction {
   status: string;
   flags: string[];
   branch: string;
+  scoringSource?: string;
+  modelVersion?: string;
 }
