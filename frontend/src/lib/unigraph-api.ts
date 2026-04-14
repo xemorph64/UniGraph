@@ -17,6 +17,7 @@ export interface BackendTransaction {
   xgboost_risk_score?: number;
   model_version?: string;
   scoring_source?: string;
+  scoring_latency_ms?: number | null;
 }
 
 export interface BackendAlert {
@@ -130,6 +131,7 @@ export interface IngestTransactionResponse {
   xgboost_risk_score?: number;
   model_version?: string;
   scoring_source?: string;
+  scoring_latency_ms?: number | null;
 }
 
 export interface BackendHealthResponse {
@@ -341,12 +343,17 @@ export function toUiTransaction(txn: BackendTransaction): Transaction {
     amountNum: typeof txn.amount === "number" ? txn.amount : 0,
     channel: normalizeChannel(txn.channel),
     timestamp: formatTimestamp(txn.timestamp),
+    timestampIso: txn.timestamp,
     riskScore: score,
     status: riskStatus(score),
     flags: (txn.rule_violations || []).map(prettifyFlag),
     branch: "-",
     scoringSource: txn.scoring_source,
     modelVersion: txn.model_version,
+    scoringLatencyMs:
+      typeof txn.scoring_latency_ms === "number"
+        ? txn.scoring_latency_ms
+        : undefined,
   };
 }
 
@@ -387,7 +394,7 @@ export async function listTransactions(params?: {
     account_id: params?.accountId,
     txn_id_prefix: params?.txnIdPrefix,
   });
-  return fetchJson<ListResponse<BackendTransaction>>(`/transactions?${query}`);
+  return fetchJson<ListResponse<BackendTransaction>>(`/transactions/?${query}`);
 }
 
 export async function getTransaction(txnId: string) {
@@ -408,7 +415,7 @@ export async function listAlerts(params?: {
     min_risk_score: params?.minRiskScore,
     transaction_id_prefix: params?.transactionIdPrefix,
   });
-  return fetchJson<ListResponse<BackendAlert>>(`/alerts?${query}`);
+  return fetchJson<ListResponse<BackendAlert>>(`/alerts/?${query}`);
 }
 
 export async function getAlert(alertId: string) {

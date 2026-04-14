@@ -66,3 +66,20 @@ def test_multiple_rules_trigger_for_high_velocity_and_device_sharing():
 
     assert "RAPID_LAYERING" in result.rule_violations
     assert "MULE_NETWORK" in result.rule_violations
+
+
+def test_typology_contributions_accumulate_for_same_typology():
+    result = rule_evaluator.evaluate(
+        {
+            "amount": 600000.0,
+            "channel": "UPI",
+            "velocity_1h": 6,
+            "velocity_24h": 1,
+            "is_dormant": False,
+            "device_account_count": 1,
+        }
+    )
+
+    # RAPID_LAYERING receives +25 (velocity) and +40 (high-value burst).
+    assert result.typology_contributions["RAPID_LAYERING"] == 65
+    assert result.typology_contributions.get("MULE_NETWORK", 0) == 0

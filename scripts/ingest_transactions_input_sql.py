@@ -16,7 +16,9 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
+import time
 from typing import Any
+from urllib.parse import quote_plus
 
 import httpx
 
@@ -522,7 +524,9 @@ async def ingest_rows(
     async with httpx.AsyncClient(timeout=timeout) as client:
         for index, row in enumerate(rows, start=1):
             try:
+                ingest_started = time.perf_counter()
                 response = await client.post(api_url, json=row)
+                backend_latency_ms = (time.perf_counter() - ingest_started) * 1000.0
                 if response.status_code != 200:
                     result["errors"] += 1
                     print(f"ERR {row['txn_id']}: HTTP {response.status_code}")
@@ -531,6 +535,7 @@ async def ingest_rows(
                             "txn_id": row["txn_id"],
                             "ok": False,
                             "status_code": response.status_code,
+                            "backend_latency_ms": round(backend_latency_ms, 3),
                             "error": response.text,
                         }
                     )
@@ -567,6 +572,7 @@ async def ingest_rows(
                     "txn_id": row["txn_id"],
                     "ok": True,
                     "status_code": response.status_code,
+                    "backend_latency_ms": round(backend_latency_ms, 3),
                     "risk_score": risk_score,
                     "risk_level": body.get("risk_level"),
                     "is_flagged": bool(body.get("is_flagged")),
@@ -576,16 +582,21 @@ async def ingest_rows(
                     "gnn_fraud_probability": body.get("gnn_fraud_probability"),
                     "if_anomaly_score": body.get("if_anomaly_score"),
                     "xgboost_risk_score": body.get("xgboost_risk_score"),
+                    "scoring_latency_ms": body.get("scoring_latency_ms"),
                     "model_version": model_version,
                 }
 
                 if ml_direct_verify and ml_score_url:
                     try:
+                        ml_direct_started = time.perf_counter()
                         direct_payload = {
                             "enriched_transaction": row,
                             "graph_features": {},
                         }
                         ml_response = await client.post(ml_score_url, json=direct_payload)
+                        ml_direct_http_latency_ms = (
+                            time.perf_counter() - ml_direct_started
+                        ) * 1000.0
                         if ml_response.status_code == 200:
                             direct_body = ml_response.json()
                             record["ml_direct"] = {
@@ -601,12 +612,14 @@ async def ingest_rows(
                                 "scoring_latency_ms": direct_body.get(
                                     "scoring_latency_ms"
                                 ),
+                                "http_latency_ms": round(ml_direct_http_latency_ms, 3),
                             }
                             result["ml_direct_success"] += 1
                         else:
                             record["ml_direct"] = {
                                 "ok": False,
                                 "status_code": ml_response.status_code,
+                                "http_latency_ms": round(ml_direct_http_latency_ms, 3),
                                 "error": ml_response.text,
                             }
                     except Exception as direct_exc:
@@ -639,6 +652,49 @@ async def ingest_rows(
                 await asyncio.sleep(delay_ms / 1000)
 
     return result
+
+
+async def purge_prefix_scope(
+    api_url: str,
+    txn_id_prefix: str,
+    *,
+    timeout: float,
+) -> dict[str, Any]:
+    prefix = (txn_id_prefix or "").strip()
+    if not prefix:
+        return {"ok": True, "skipped": True, "reason": "empty-prefix"}
+
+    transactions_base = api_url
+    if transactions_base.endswith("/ingest"):
+        transactions_base = transactions_base[: -len("/ingest")]
+
+    purge_url = (
+        f"{transactions_base}/ops/purge-scope"
+        f"?txn_id_prefix={quote_plus(prefix)}"
+    )
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(purge_url)
+        payload: Any
+        try:
+            payload = response.json()
+        except Exception:
+            payload = response.text
+
+    if response.status_code != 200:
+        return {
+            "ok": False,
+            "url": purge_url,
+            "status_code": response.status_code,
+            "payload": payload,
+        }
+
+    return {
+        "ok": True,
+        "url": purge_url,
+        "status_code": response.status_code,
+        "payload": payload,
+    }
 
 
 async def fetch_runtime_snapshots(
@@ -692,11 +748,71 @@ def build_report(
     enrichment_trace: list[dict[str, Any]],
     runtime_snapshots: dict[str, Any],
 ) -> dict[str, Any]:
+    def _latency_stats(values: list[float]) -> dict[str, float] | None:
+        if not values:
+            return None
+
+        sorted_values = sorted(float(v) for v in values)
+
+        def _percentile(percentile: float) -> float:
+            if len(sorted_values) == 1:
+                return sorted_values[0]
+            rank = (len(sorted_values) - 1) * percentile
+            lower = int(rank)
+            upper = min(lower + 1, len(sorted_values) - 1)
+            weight = rank - lower
+            return sorted_values[lower] * (1.0 - weight) + sorted_values[upper] * weight
+
+        return {
+            "count": int(len(sorted_values)),
+            "min": round(sorted_values[0], 3),
+            "max": round(sorted_values[-1], 3),
+            "avg": round(sum(sorted_values) / len(sorted_values), 3),
+            "p50": round(_percentile(0.50), 3),
+            "p95": round(_percentile(0.95), 3),
+            "p99": round(_percentile(0.99), 3),
+        }
+
     records = ingest_result.get("records", [])
     success_records = [r for r in records if r.get("ok")]
     ml_outputs_observed = sum(
         1 for row in success_records if row.get("xgboost_risk_score") is not None
     )
+
+    backend_latency_samples = [
+        float(row["backend_latency_ms"])
+        for row in success_records
+        if row.get("backend_latency_ms") is not None
+    ]
+
+    scoring_latency_samples = [
+        float(row["scoring_latency_ms"])
+        for row in success_records
+        if row.get("scoring_latency_ms") is not None
+    ]
+
+    ml_direct_scoring_latency_samples = [
+        float(row["ml_direct"]["scoring_latency_ms"])
+        for row in success_records
+        if isinstance(row.get("ml_direct"), dict)
+        and row["ml_direct"].get("ok")
+        and row["ml_direct"].get("scoring_latency_ms") is not None
+    ]
+
+    ml_direct_http_latency_samples = [
+        float(row["ml_direct"]["http_latency_ms"])
+        for row in success_records
+        if isinstance(row.get("ml_direct"), dict)
+        and row["ml_direct"].get("ok")
+        and row["ml_direct"].get("http_latency_ms") is not None
+    ]
+
+    latency_summary = {
+        "backend_ingest_http": _latency_stats(backend_latency_samples),
+        "backend_scoring_field": _latency_stats(scoring_latency_samples),
+        "ml_direct_scoring": _latency_stats(ml_direct_scoring_latency_samples),
+        "ml_direct_http": _latency_stats(ml_direct_http_latency_samples),
+    }
     top_risk = sorted(
         success_records,
         key=lambda item: float(item.get("risk_score", 0.0)),
@@ -724,6 +840,7 @@ def build_report(
             "model_versions": dict(ingest_result.get("model_versions", {})),
             "rule_counts": dict(ingest_result["rule_counts"]),
             "primary_type_counts": dict(ingest_result["primary_type_counts"]),
+            "latency_ms": latency_summary,
         },
         "enrichment_summary": {
             "max_device_account_count": max_device_accounts,
@@ -756,6 +873,30 @@ def print_summary(report: dict[str, Any]) -> None:
             model_versions.items(), key=lambda item: (-item[1], item[0])
         ):
             print(f"  {version}: {count}")
+
+    latency = totals.get("latency_ms") or {}
+    backend_http = latency.get("backend_ingest_http")
+    scoring_field = latency.get("backend_scoring_field")
+    ml_direct_scoring = latency.get("ml_direct_scoring")
+
+    if backend_http:
+        print(
+            "Backend ingest HTTP latency (ms): "
+            f"avg={backend_http['avg']:.3f} p50={backend_http['p50']:.3f} "
+            f"p95={backend_http['p95']:.3f} p99={backend_http['p99']:.3f}"
+        )
+    if scoring_field:
+        print(
+            "Backend scoring field latency (ms): "
+            f"avg={scoring_field['avg']:.3f} p50={scoring_field['p50']:.3f} "
+            f"p95={scoring_field['p95']:.3f} p99={scoring_field['p99']:.3f}"
+        )
+    if ml_direct_scoring:
+        print(
+            "ML direct scoring latency (ms): "
+            f"avg={ml_direct_scoring['avg']:.3f} p50={ml_direct_scoring['p50']:.3f} "
+            f"p95={ml_direct_scoring['p95']:.3f} p99={ml_direct_scoring['p99']:.3f}"
+        )
 
     print("\nRule Counts")
     print("-" * 50)
@@ -790,6 +931,7 @@ async def _main_async(
     dry_run: bool,
     ml_direct_verify: bool,
     ml_score_url: str,
+    purge_prefix: str,
 ) -> int:
     rows = parse_transactions(sql_file)
     payloads, enrichment_trace = build_enriched_payloads(rows)
@@ -802,6 +944,27 @@ async def _main_async(
         for sample in payloads[:5]:
             print(json.dumps(sample, ensure_ascii=True))
         return 0
+
+    purge_snapshot: dict[str, Any] | None = None
+    if purge_prefix.strip():
+        print(f"Pre-ingest purge for prefix: {purge_prefix.strip()}")
+        purge_snapshot = await purge_prefix_scope(
+            api_url,
+            purge_prefix,
+            timeout=max(1.0, timeout),
+        )
+        if not purge_snapshot.get("ok"):
+            print(f"ERR pre-ingest purge failed: {purge_snapshot}")
+            return 1
+
+        payload = purge_snapshot.get("payload")
+        if isinstance(payload, dict):
+            print(
+                "Purged "
+                f"alerts={payload.get('alerts_deleted', 0)} "
+                f"transactions={payload.get('transactions_deleted', 0)} "
+                f"sent_edges={payload.get('sent_relationships_deleted', 0)}"
+            )
 
     ingest_result = await ingest_rows(
         payloads,
@@ -816,6 +979,8 @@ async def _main_async(
         timeout=max(1.0, timeout),
         ml_score_url=ml_score_url,
     )
+    if purge_snapshot:
+        runtime_snapshots["pre_ingest_purge"] = purge_snapshot
 
     report = build_report(
         sql_file=sql_file,
@@ -845,6 +1010,11 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--ml-direct-verify", action="store_true")
     parser.add_argument("--ml-score-url", default="http://localhost:8002/api/v1/ml/score")
+    parser.add_argument(
+        "--purge-prefix",
+        default="",
+        help="Delete previous replay artifacts for this transaction id prefix before ingest.",
+    )
     args = parser.parse_args()
 
     if not args.sql_file.exists():
@@ -862,6 +1032,7 @@ def main() -> int:
             dry_run=args.dry_run,
             ml_direct_verify=args.ml_direct_verify,
             ml_score_url=args.ml_score_url,
+            purge_prefix=args.purge_prefix,
         )
     )
 

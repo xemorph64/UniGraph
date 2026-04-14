@@ -31,13 +31,19 @@ async def list_alerts(
     transaction_id_prefix: Optional[str] = None,
 ):
     """List alerts with pagination and filters."""
-    alerts = await neo4j_service.get_alerts(
+    result = await neo4j_service.get_alerts(
         status=status,
         min_risk_score=min_risk_score,
         transaction_id_prefix=transaction_id_prefix,
         limit=page_size,
+        skip=(page - 1) * page_size,
     )
-    return {"items": alerts, "page": page, "page_size": page_size, "total": len(alerts)}
+    return {
+        "items": result["items"],
+        "page": page,
+        "page_size": page_size,
+        "total": result["total"],
+    }
 
 
 @router.get("/{alert_id}")

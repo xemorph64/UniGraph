@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Bot, Send } from "lucide-react";
 import RiskScoreBar, { getRiskColor, getRiskLabel } from "@/components/RiskScoreBar";
 import {
@@ -121,6 +121,8 @@ function getResponse(params: {
 
 export default function CopilotPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const txnPrefix = searchParams.get("txnPrefix")?.trim() || "";
   const [alerts, setAlerts] = useState<AlertCardLike[]>([]);
   const [selectedCase, setSelectedCase] = useState("");
   const [investigation, setInvestigation] = useState<InvestigationResponse | null>(null);
@@ -144,6 +146,23 @@ export default function CopilotPage() {
     return alerts.filter((alert) => alert.id !== activeAlert.id && alert.fraudType === activeAlert.fraudType);
   }, [alerts, activeAlert]);
 
+  const scopedPath = useCallback(
+    (path: string, extras?: Record<string, string>) => {
+      const query = new URLSearchParams();
+      if (txnPrefix) {
+        query.set("txnPrefix", txnPrefix);
+      }
+      Object.entries(extras || {}).forEach(([key, value]) => {
+        if (value) {
+          query.set(key, value);
+        }
+      });
+      const suffix = query.toString();
+      return suffix ? `${path}?${suffix}` : path;
+    },
+    [txnPrefix],
+  );
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, thinking]);
@@ -152,8 +171,8 @@ export default function CopilotPage() {
     setLoading(true);
     try {
       const [alertResp, txnResp, strResp] = await Promise.all([
-        listAlerts({ page: 1, pageSize: 200 }),
-        listTransactions({ page: 1, pageSize: 500 }),
+        listAlerts({ page: 1, pageSize: 200, transactionIdPrefix: txnPrefix || undefined }),
+        listTransactions({ page: 1, pageSize: 500, txnIdPrefix: txnPrefix || undefined }),
         listStrReports({ page: 1, pageSize: 500 }),
       ]);
 
@@ -175,7 +194,9 @@ export default function CopilotPage() {
         setMessages([
           {
             role: "assistant",
-            content: "No live alerts are currently available. Ingest or trigger a suspicious transaction to begin Copilot analysis.",
+            content: txnPrefix
+              ? `No live alerts are currently available for scope ${txnPrefix}. Ingest or replay matching transactions to begin Copilot analysis.`
+              : "No live alerts are currently available. Ingest or trigger a suspicious transaction to begin Copilot analysis.",
             time: getTime(),
           },
         ]);
@@ -190,7 +211,7 @@ export default function CopilotPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [txnPrefix]);
 
   const loadInvestigation = useCallback(async (alertId: string) => {
     if (!alertId) return;
@@ -330,10 +351,18 @@ export default function CopilotPage() {
 
         <div className="bg-card border border-border rounded-lg p-3 flex flex-wrap items-center gap-2">
           <span className="text-[11px] text-muted-foreground mr-1">Copilot Actions:</span>
-          <button onClick={() => selectedCase && navigate(`/graph?alert=${selectedCase}`)} className="text-[11px] border border-border rounded-md px-3 py-1.5 bg-card text-foreground hover:bg-muted cursor-pointer" disabled={!selectedCase}>
+          <button
+            onClick={() => selectedCase && navigate(scopedPath("/graph", { alert: selectedCase }))}
+            className="text-[11px] border border-border rounded-md px-3 py-1.5 bg-card text-foreground hover:bg-muted cursor-pointer"
+            disabled={!selectedCase}
+          >
             View Case Graph
           </button>
-          <button onClick={() => selectedCase && navigate(`/str-generator?alert=${selectedCase}`)} className="text-[11px] border border-border rounded-md px-3 py-1.5 bg-card text-foreground hover:bg-muted cursor-pointer" disabled={!selectedCase}>
+          <button
+            onClick={() => selectedCase && navigate(scopedPath("/str-generator", { alert: selectedCase }))}
+            className="text-[11px] border border-border rounded-md px-3 py-1.5 bg-card text-foreground hover:bg-muted cursor-pointer"
+            disabled={!selectedCase}
+          >
             Generate STR
           </button>
           <button onClick={exportChatLog} className="text-[11px] border border-border rounded-md px-3 py-1.5 bg-card text-foreground hover:bg-muted cursor-pointer" disabled={!messages.length}>

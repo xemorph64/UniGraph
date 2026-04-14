@@ -30,6 +30,7 @@ class TransactionResponse(BaseModel):
     xgboost_risk_score: Optional[int] = None
     model_version: Optional[str] = None
     scoring_source: Optional[str] = None
+    scoring_latency_ms: Optional[float] = None
 
 
 class TransactionNodeResponse(BaseModel):
@@ -48,6 +49,7 @@ class TransactionNodeResponse(BaseModel):
     xgboost_risk_score: Optional[int] = None
     model_version: Optional[str] = None
     scoring_source: Optional[str] = None
+    scoring_latency_ms: Optional[float] = None
 
 
 class TransactionIngest(BaseModel):
@@ -122,6 +124,15 @@ async def list_transactions(
     }
 
 
+@router.post("/ops/purge-scope")
+async def purge_transactions_scope(
+    txn_id_prefix: str = Query(..., min_length=1),
+):
+    """Delete transaction and alert artifacts for a dataset prefix."""
+    outcome = await neo4j_service.purge_transactions_by_prefix(txn_id_prefix)
+    return {"status": "ok", **outcome}
+
+
 @router.post("/ingest", response_model=TransactionResponse)
 async def ingest_transaction(txn: TransactionIngest):
     """Ingest a transaction and run fraud scoring pipeline."""
@@ -142,6 +153,7 @@ async def ingest_transaction(txn: TransactionIngest):
     txn_dict["xgboost_risk_score"] = score_result.get("xgboost_risk_score")
     txn_dict["model_version"] = score_result.get("model_version")
     txn_dict["scoring_source"] = score_result.get("scoring_source")
+    txn_dict["scoring_latency_ms"] = score_result.get("scoring_latency_ms")
 
     await neo4j_service.upsert_account(
         txn.from_account,
@@ -211,4 +223,5 @@ async def ingest_transaction(txn: TransactionIngest):
         xgboost_risk_score=score_result.get("xgboost_risk_score"),
         model_version=score_result.get("model_version"),
         scoring_source=score_result.get("scoring_source"),
+        scoring_latency_ms=score_result.get("scoring_latency_ms"),
     )

@@ -22,14 +22,21 @@ export function AppSidebar() {
   const { state, toggleSidebar } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
+  const txnPrefix = new URLSearchParams(location.search).get("txnPrefix")?.trim() || "";
   const [alertCount, setAlertCount] = useState<number | null>(null);
+  const withScope = (path: string) =>
+    txnPrefix ? `${path}?txnPrefix=${encodeURIComponent(txnPrefix)}` : path;
 
   useEffect(() => {
     let mounted = true;
 
     const loadCount = async () => {
       try {
-        const response = await listAlerts({ page: 1, pageSize: 1 });
+        const response = await listAlerts({
+          page: 1,
+          pageSize: 1,
+          transactionIdPrefix: txnPrefix || undefined,
+        });
         if (mounted) {
           setAlertCount(response.total ?? response.items.length);
         }
@@ -46,7 +53,7 @@ export function AppSidebar() {
       mounted = false;
       clearInterval(poller);
     };
-  }, []);
+  }, [txnPrefix]);
 
   const mainItems = [
     { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -106,7 +113,7 @@ export function AppSidebar() {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <NavLink
-                              to={item.url}
+                              to={withScope(item.url)}
                               end={item.url === "/"}
                               className={`flex items-center justify-center rounded-md mx-1 py-2.5 ${active ? "bg-info text-white" : "text-white/60 hover:bg-white/10 hover:text-white"}`}
                               style={active ? { borderLeft: "3px solid hsl(var(--danger))" } : undefined}
@@ -118,7 +125,7 @@ export function AppSidebar() {
                         </Tooltip>
                       ) : (
                         <NavLink
-                          to={item.url}
+                          to={withScope(item.url)}
                           end={item.url === "/"}
                           className={`flex items-center gap-2.5 rounded-md mx-1 px-4 py-2.5 text-[16px] font-medium ${active ? "bg-info text-white font-semibold" : "text-white/60 hover:bg-white/10 hover:text-white"}`}
                           style={active ? { borderLeft: "3px solid hsl(var(--danger))" } : undefined}
@@ -152,7 +159,7 @@ export function AppSidebar() {
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <NavLink
-                          to="/settings"
+                          to={withScope("/settings")}
                           className={`flex items-center justify-center rounded-md mx-1 py-2.5 ${isActive("/settings") ? "bg-info text-white" : "text-white/60 hover:bg-white/10 hover:text-white"}`}
                         >
                           <Settings className="h-4 w-4" />
@@ -162,7 +169,7 @@ export function AppSidebar() {
                     </Tooltip>
                   ) : (
                     <NavLink
-                      to="/settings"
+                      to={withScope("/settings")}
                       className={`flex items-center gap-2.5 rounded-md mx-1 px-4 py-2.5 text-[13px] font-medium ${isActive("/settings") ? "bg-info text-white font-semibold" : "text-white/60 hover:bg-white/10 hover:text-white"}`}
                     >
                       <Settings className="h-4 w-4 shrink-0" />

@@ -145,7 +145,8 @@ class Neo4jService:
                     t.if_anomaly_score = $if_anomaly_score,
                     t.xgboost_risk_score = $xgboost_risk_score,
                     t.model_version = $model_version,
-                    t.scoring_source = $scoring_source
+                    t.scoring_source = $scoring_source,
+                    t.scoring_latency_ms = $scoring_latency_ms
                 ON MATCH SET
                     t.amount = $amount,
                     t.channel = $channel,
@@ -162,7 +163,8 @@ class Neo4jService:
                     t.if_anomaly_score = $if_anomaly_score,
                     t.xgboost_risk_score = $xgboost_risk_score,
                     t.model_version = $model_version,
-                    t.scoring_source = $scoring_source
+                    t.scoring_source = $scoring_source,
+                    t.scoring_latency_ms = $scoring_latency_ms
                 RETURN t
                 """,
                 txn_id=txn["txn_id"],
@@ -182,6 +184,7 @@ class Neo4jService:
                 xgboost_risk_score=txn.get("xgboost_risk_score"),
                 model_version=txn.get("model_version"),
                 scoring_source=txn.get("scoring_source"),
+                scoring_latency_ms=txn.get("scoring_latency_ms"),
             )
             await session.run(
                 """
@@ -367,9 +370,10 @@ class Neo4jService:
         min_risk_score: Optional[int] = None,
         transaction_id_prefix: Optional[str] = None,
         limit: int = 50,
-    ) -> list[dict]:
+        skip: int = 0,
+    ) -> dict:
         filters = []
-        params: dict[str, Any] = {"limit": limit}
+        params: dict[str, Any] = {"limit": limit, "skip": skip}
         if status:
             filters.append("al.status = $status")
             params["status"] = status
@@ -381,12 +385,24 @@ class Neo4jService:
             params["transaction_id_prefix"] = transaction_id_prefix
         where_clause = ("WHERE " + " AND ".join(filters)) if filters else ""
         async with self.driver.session() as session:
+            total_result = await session.run(
+                f"""
+                MATCH (al:Alert)
+                {where_clause}
+                RETURN count(al) as total
+                """,
+                **params,
+            )
+            total_record = await total_result.single()
+            total = int(total_record["total"]) if total_record else 0
+
             result = await session.run(
                 f"""
                 MATCH (al:Alert)
                 {where_clause}
                 RETURN al
                 ORDER BY al.created_at DESC
+                SKIP $skip
                 LIMIT $limit
                 """,
                 **params,
@@ -394,7 +410,71 @@ class Neo4jService:
             alerts = []
             async for record in result:
                 alerts.append(self._serialize_temporals(dict(record["al"])))
-            return alerts
+            return {"items": alerts, "total": total}
+
+    async def purge_transactions_by_prefix(self, txn_id_prefix: str) -> dict:
+        """Delete replay artifacts for a transaction-id prefix.
+
+        Removes transaction-scoped alert and transfer edges before deleting
+        transactions so reruns for the same dataset prefix stay clean.
+        """
+        prefix = (txn_id_prefix or "").strip()
+        if not prefix:
+            return {
+                "txn_id_prefix": prefix,
+                "alerts_deleted": 0,
+                "transactions_deleted": 0,
+                "sent_relationships_deleted": 0,
+            }
+
+        async with self.driver.session() as session:
+            rel_result = await session.run(
+                """
+                MATCH ()-[r:SENT]->()
+                WHERE coalesce(r.txn_id, '') STARTS WITH $prefix
+                WITH collect(r) AS rels
+                FOREACH (rel IN rels | DELETE rel)
+                RETURN size(rels) AS deleted_count
+                """,
+                prefix=prefix,
+            )
+            rel_record = await rel_result.single()
+            sent_relationships_deleted = (
+                int(rel_record["deleted_count"]) if rel_record else 0
+            )
+
+            alert_result = await session.run(
+                """
+                MATCH (al:Alert)
+                WHERE coalesce(al.transaction_id, '') STARTS WITH $prefix
+                WITH collect(al) AS alerts
+                FOREACH (a IN alerts | DETACH DELETE a)
+                RETURN size(alerts) AS deleted_count
+                """,
+                prefix=prefix,
+            )
+            alert_record = await alert_result.single()
+            alerts_deleted = int(alert_record["deleted_count"]) if alert_record else 0
+
+            txn_result = await session.run(
+                """
+                MATCH (t:Transaction)
+                WHERE t.id STARTS WITH $prefix
+                WITH collect(t) AS txns
+                FOREACH (txn IN txns | DETACH DELETE txn)
+                RETURN size(txns) AS deleted_count
+                """,
+                prefix=prefix,
+            )
+            txn_record = await txn_result.single()
+            transactions_deleted = int(txn_record["deleted_count"]) if txn_record else 0
+
+        return {
+            "txn_id_prefix": prefix,
+            "alerts_deleted": alerts_deleted,
+            "transactions_deleted": transactions_deleted,
+            "sent_relationships_deleted": sent_relationships_deleted,
+        }
 
     async def get_alert_by_id(self, alert_id: str) -> Optional[dict]:
         async with self.driver.session() as session:

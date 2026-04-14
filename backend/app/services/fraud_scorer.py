@@ -232,6 +232,11 @@ class FraudScorer:
                     datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 )
             ),
+            "scoring_latency_ms": (
+                float(ml_result.get("scoring_latency_ms"))
+                if ml_result.get("scoring_latency_ms") is not None
+                else None
+            ),
             "scoring_source": "ml_blended",
         }
 
@@ -251,6 +256,7 @@ class FraudScorer:
             "scoring_timestamp": datetime.now(timezone.utc).isoformat().replace(
                 "+00:00", "Z"
             ),
+            "scoring_latency_ms": None,
             "scoring_source": "rules_fallback",
         }
 
@@ -415,6 +421,7 @@ class FraudScorer:
             shap_top3 = blended["shap_top3"]
             model_version = blended["model_version"]
             scoring_timestamp = blended["scoring_timestamp"]
+            scoring_latency_ms = blended["scoring_latency_ms"]
             scoring_source = blended["scoring_source"]
             logger.info(
                 "ml_service_score_applied",
@@ -437,11 +444,15 @@ class FraudScorer:
             shap_top3 = fallback["shap_top3"]
             model_version = fallback["model_version"]
             scoring_timestamp = fallback["scoring_timestamp"]
+            scoring_latency_ms = fallback["scoring_latency_ms"]
             scoring_source = fallback["scoring_source"]
 
         risk_level, recommendation = self._risk_level_and_recommendation(risk_score)
 
-        primary_fraud_type = self._select_primary_fraud_type(rule_violations)
+        primary_fraud_type = self._select_primary_fraud_type(
+            rule_violations,
+            typology_contributions=rule_eval.typology_contributions,
+        )
 
         result = {
             "txn_id": txn.get("txn_id", str(uuid.uuid4())),
@@ -456,6 +467,7 @@ class FraudScorer:
             "xgboost_risk_score": xgboost_risk_score,
             "model_version": model_version,
             "scoring_timestamp": scoring_timestamp,
+            "scoring_latency_ms": scoring_latency_ms,
             "scoring_source": scoring_source,
             "graph_features": graph_features,
         }
@@ -471,9 +483,40 @@ class FraudScorer:
         return result
 
     @staticmethod
-    def _select_primary_fraud_type(rule_violations: list[str]) -> Optional[str]:
+    def _select_primary_fraud_type(
+        rule_violations: list[str],
+        typology_contributions: Optional[dict[str, float]] = None,
+    ) -> Optional[str]:
         if not rule_violations:
             return None
+
+        if typology_contributions:
+            contribution_by_rule = {
+                rule: float(typology_contributions.get(rule, 0.0))
+                for rule in set(rule_violations)
+            }
+            positive_contributions = {
+                rule: score
+                for rule, score in contribution_by_rule.items()
+                if score > 0
+            }
+
+            if positive_contributions:
+                max_contribution = max(positive_contributions.values())
+                top_typologies = {
+                    rule
+                    for rule, score in positive_contributions.items()
+                    if score == max_contribution
+                }
+
+                for typology in TYPOLOGY_PRIORITY:
+                    if typology in top_typologies:
+                        return typology
+
+                # Preserve backward compatibility for unknown future rule names.
+                for rule in rule_violations:
+                    if rule in top_typologies:
+                        return rule
 
         unique_rules = set(rule_violations)
         for typology in TYPOLOGY_PRIORITY:

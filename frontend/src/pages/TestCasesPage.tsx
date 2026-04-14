@@ -164,7 +164,7 @@ export default function TestCasesPage() {
           </button>
           {alerts[0]?.id && (
             <button
-              onClick={() => navigate(`/graph?alert=${encodeURIComponent(alerts[0].id)}`)}
+              onClick={() => navigate(`/graph?alert=${encodeURIComponent(alerts[0].id)}&txnPrefix=${encodeURIComponent(TXN_PREFIX)}`)}
               className="text-xs px-3 py-2 rounded-md border border-border bg-card text-foreground hover:bg-muted cursor-pointer"
             >
               Open Latest Graph Investigation
@@ -204,7 +204,7 @@ export default function TestCasesPage() {
                   <td className="p-2.5 text-muted-foreground">{formatWhen(alert.created_at)}</td>
                   <td className="p-2.5 text-right">
                     <button
-                      onClick={() => navigate(`/graph?alert=${encodeURIComponent(alert.id)}`)}
+                      onClick={() => navigate(`/graph?alert=${encodeURIComponent(alert.id)}&txnPrefix=${encodeURIComponent(TXN_PREFIX)}`)}
                       className="text-xs text-primary hover:underline cursor-pointer"
                     >
                       Investigate

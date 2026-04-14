@@ -17,19 +17,31 @@ type StatusType = "OPEN" | "UNDER REVIEW" | "STR FILED";
 
 interface AlertItem {
   id: string;
+  transactionId: string;
   account: string;
   fraudType: string;
   amount: string;
   channel: string;
   date: string;
+  createdAt?: string;
   description: string;
   priority: Priority;
   riskScore: number;
   status: StatusType;
-  strDeadlineDays: number;
+  strDeadlineDays: number | null;
   scoringSource?: string;
   modelVersion?: string;
   shapReasons: ParsedShapReason[];
+}
+
+function computeStrDeadlineDays(createdAt?: string) {
+  if (!createdAt) return null;
+  const created = new Date(createdAt);
+  if (Number.isNaN(created.getTime())) return null;
+
+  const dueAt = created.getTime() + 7 * 24 * 60 * 60 * 1000;
+  const remainingMs = dueAt - Date.now();
+  return Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
 }
 
 function formatScoringSource(value?: string) {
@@ -59,23 +71,25 @@ function mapBackendStatus(status?: string): StatusType {
 
 function toAlertItem(
   card: AlertCardLike,
-  index: number,
+  createdAt: string | undefined,
   scoringSource?: string,
   modelVersion?: string,
   shapReasons: ParsedShapReason[] = [],
 ): AlertItem {
   return {
     id: card.id,
+    transactionId: card.transactionId,
     account: card.account,
     fraudType: card.fraudType,
     amount: card.amount,
     channel: card.channel,
     date: card.timeDetected.split(" ")[0] || "-",
+    createdAt,
     description: card.description,
     priority: getPriority(card.riskScore),
     riskScore: card.riskScore,
     status: mapBackendStatus(card.status),
-    strDeadlineDays: Math.max(1, 10 - index),
+    strDeadlineDays: computeStrDeadlineDays(createdAt),
     scoringSource,
     modelVersion,
     shapReasons,
@@ -150,12 +164,30 @@ export default function AlertsQueue() {
       ]);
 
       const txnById = new Map(txnResp.items.map((txn) => [txn.id, txn]));
-      const mapped = alertResp.items.map((alert, index) => {
+      const seenTxnIds = new Set<string>();
+      const mapped: AlertItem[] = [];
+
+      for (const alert of alertResp.items) {
+        const uniqueTxnId = alert.transaction_id || alert.id;
+        if (seenTxnIds.has(uniqueTxnId)) {
+          continue;
+        }
+        seenTxnIds.add(uniqueTxnId);
+
         const txn = txnById.get(alert.transaction_id);
         const card = toAlertCard(alert, txn);
         const shapReasons = parseShapReasons(alert.shap_top3).slice(0, 3);
-        return toAlertItem(card, index, txn?.scoring_source, txn?.model_version, shapReasons);
-      });
+        mapped.push(
+          toAlertItem(
+            card,
+            alert.created_at,
+            txn?.scoring_source,
+            txn?.model_version,
+            shapReasons,
+          ),
+        );
+      }
+
       setAlerts(mapped);
       setError(null);
     } catch (err) {
@@ -185,21 +217,35 @@ export default function AlertsQueue() {
           const txn = incomingAlert.transaction_id ? await getTransaction(incomingAlert.transaction_id) : undefined;
           const item = toAlertItem(
             toAlertCard(incomingAlert, txn),
-            0,
+            incomingAlert.created_at,
             txn?.scoring_source,
             txn?.model_version,
             parseShapReasons(incomingAlert.shap_top3).slice(0, 3),
           );
-          setAlerts((prev) => [item, ...prev.filter((a) => a.id !== item.id)]);
+          setAlerts((prev) => [
+            item,
+            ...prev.filter(
+              (a) =>
+                a.id !== item.id &&
+                (!item.transactionId || a.transactionId !== item.transactionId),
+            ),
+          ]);
         } catch {
           const item = toAlertItem(
             toAlertCard(incomingAlert),
-            0,
+            incomingAlert.created_at,
             undefined,
             undefined,
             parseShapReasons(incomingAlert.shap_top3).slice(0, 3),
           );
-          setAlerts((prev) => [item, ...prev.filter((a) => a.id !== item.id)]);
+          setAlerts((prev) => [
+            item,
+            ...prev.filter(
+              (a) =>
+                a.id !== item.id &&
+                (!item.transactionId || a.transactionId !== item.transactionId),
+            ),
+          ]);
         }
       },
       setWsConnected,
@@ -268,7 +314,7 @@ export default function AlertsQueue() {
         </div>
         <div className="bg-card border border-border rounded-[10px] p-3 text-center">
           <div className="text-2xl font-bold text-danger animate-pulse-dot">
-            {alerts.filter(a => a.strDeadlineDays <= 7).length}
+            {alerts.filter(a => a.strDeadlineDays !== null && a.strDeadlineDays <= 7).length}
           </div>
           <div className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">STR Deadline {"<"}7 days</div>
         </div>
@@ -415,17 +461,33 @@ export default function AlertsQueue() {
 
                 {/* STR Deadline */}
                 <span
-                  className={`text-[11px] font-semibold px-2 py-0.5 rounded whitespace-nowrap ${a.strDeadlineDays <= 3 ? "animate-pulse-dot" : ""}`}
+                  className={`text-[11px] font-semibold px-2 py-0.5 rounded whitespace-nowrap ${a.strDeadlineDays !== null && a.strDeadlineDays <= 3 ? "animate-pulse-dot" : ""}`}
                   style={{
-                    color: a.status === "STR FILED" ? "hsl(var(--success))" : a.strDeadlineDays <= 3 ? "hsl(var(--danger))" : "hsl(var(--warning))",
-                    background: a.status === "STR FILED" ? "hsl(149, 80%, 90%)" : a.strDeadlineDays <= 3 ? "hsl(0, 86%, 97%)" : "hsl(48, 96%, 89%)",
+                    color:
+                      a.status === "STR FILED"
+                        ? "hsl(var(--success))"
+                        : a.strDeadlineDays !== null && a.strDeadlineDays <= 3
+                          ? "hsl(var(--danger))"
+                          : "hsl(var(--warning))",
+                    background:
+                      a.status === "STR FILED"
+                        ? "hsl(149, 80%, 90%)"
+                        : a.strDeadlineDays !== null && a.strDeadlineDays <= 3
+                          ? "hsl(0, 86%, 97%)"
+                          : "hsl(48, 96%, 89%)",
                   }}
                 >
-                  {a.status === "STR FILED" ? "Filed ✓" : `${a.strDeadlineDays} days left`}
+                  {a.status === "STR FILED" ? "Filed ✓" : a.strDeadlineDays === null ? "Deadline N/A" : `${a.strDeadlineDays} days left`}
                 </span>
 
                 <button
-                  onClick={() => navigate(`/graph?alert=${a.id}`)}
+                  onClick={() =>
+                    navigate(
+                      txnPrefix
+                        ? `/graph?alert=${encodeURIComponent(a.id)}&txnPrefix=${encodeURIComponent(txnPrefix)}`
+                        : `/graph?alert=${encodeURIComponent(a.id)}`,
+                    )
+                  }
                   className="bg-primary text-primary-foreground rounded-md px-4 py-1.5 text-xs font-semibold cursor-pointer hover:bg-primary/90 flex items-center gap-1 shrink-0"
                 >
                   Investigate <ArrowRight className="w-3.5 h-3.5" />

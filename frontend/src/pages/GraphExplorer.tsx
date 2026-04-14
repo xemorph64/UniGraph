@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Download, FileText, Info } from "lucide-react";
 import RiskScoreBar, { getRiskColor, getRiskLabel } from "@/components/RiskScoreBar";
 import LiveGraph from "@/components/LiveGraph";
-import { investigateAlert, type InvestigationResponse } from "@/lib/unigraph-api";
+import { investigateAlert, listAlerts, type InvestigationResponse } from "@/lib/unigraph-api";
 import { formatImpactPoints, parseShapReasons } from "@/lib/shap-explain";
 import { toast } from "sonner";
 
@@ -30,25 +30,54 @@ function formatAmount(amount?: number): string {
 export default function GraphExplorer() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const alertId = params.get("alert") || "";
+  const alertId = params.get("alert")?.trim() || "";
+  const txnPrefix = params.get("txnPrefix")?.trim() || "";
+  const [resolvedAlertId, setResolvedAlertId] = useState(alertId);
 
   const [payload, setPayload] = useState<InvestigationResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadInvestigation = useCallback(async () => {
-    if (!alertId) {
-      setError("Missing alert id in URL");
-      setLoading(false);
-      return;
-    }
+  const alertsPath = txnPrefix
+    ? `/alerts?txnPrefix=${encodeURIComponent(txnPrefix)}`
+    : "/alerts";
 
+  const loadInvestigation = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await investigateAlert(alertId, 2);
+      let targetAlertId = alertId;
+      if (!targetAlertId) {
+        const alertResp = await listAlerts({
+          page: 1,
+          pageSize: 1,
+          transactionIdPrefix: txnPrefix || undefined,
+        });
+        targetAlertId = alertResp.items[0]?.id || "";
+
+        if (!targetAlertId) {
+          setPayload(null);
+          setResolvedAlertId("");
+          setError(
+            txnPrefix
+              ? `No alerts found for scope ${txnPrefix}.`
+              : "No alerts available for investigation.",
+          );
+          return;
+        }
+
+        const nextParams = new URLSearchParams();
+        nextParams.set("alert", targetAlertId);
+        if (txnPrefix) {
+          nextParams.set("txnPrefix", txnPrefix);
+        }
+        navigate(`/graph?${nextParams.toString()}`, { replace: true });
+      }
+
+      const data = await investigateAlert(targetAlertId, 2);
       if ((data as unknown as { error?: string }).error) {
         throw new Error((data as unknown as { error: string }).error);
       }
+      setResolvedAlertId(targetAlertId);
       setPayload(data);
       setError(null);
     } catch (err) {
@@ -56,7 +85,7 @@ export default function GraphExplorer() {
     } finally {
       setLoading(false);
     }
-  }, [alertId]);
+  }, [alertId, navigate, txnPrefix]);
 
   useEffect(() => {
     loadInvestigation();
@@ -104,9 +133,14 @@ export default function GraphExplorer() {
   }, [payload]);
 
   const handleGenerateSTR = useCallback(() => {
-    if (!alertId) return;
-    navigate(`/str-generator?alert=${encodeURIComponent(alertId)}`);
-  }, [alertId, navigate]);
+    if (!resolvedAlertId) return;
+    const nextParams = new URLSearchParams();
+    nextParams.set("alert", resolvedAlertId);
+    if (txnPrefix) {
+      nextParams.set("txnPrefix", txnPrefix);
+    }
+    navigate(`/str-generator?${nextParams.toString()}`);
+  }, [navigate, resolvedAlertId, txnPrefix]);
 
   const handleExport = useCallback(() => {
     if (!payload) return;
@@ -115,13 +149,13 @@ export default function GraphExplorer() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `investigation-${alertId || "alert"}.json`;
+    link.download = `investigation-${resolvedAlertId || "alert"}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     toast.success("Evidence package exported");
-  }, [payload, alertId]);
+  }, [payload, resolvedAlertId]);
 
   if (loading) {
     return <div className="text-sm text-muted-foreground">Loading live investigation data...</div>;
@@ -132,7 +166,7 @@ export default function GraphExplorer() {
       <div className="space-y-3">
         <h1 className="text-xl font-bold text-primary">Graph Investigation</h1>
         <p className="text-sm text-danger">{error || "Investigation payload unavailable"}</p>
-        <button onClick={() => navigate("/alerts")} className="text-xs text-primary hover:underline flex items-center gap-1 cursor-pointer">
+        <button onClick={() => navigate(alertsPath)} className="text-xs text-primary hover:underline flex items-center gap-1 cursor-pointer">
           <ArrowLeft className="w-3 h-3" /> Back to Alerts
         </button>
       </div>
@@ -194,7 +228,7 @@ export default function GraphExplorer() {
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-info/10 text-info">{model.alert.status || "OPEN"}</span>
               </div>
             </div>
-            <button onClick={() => navigate("/alerts")} className="text-xs text-primary hover:underline mt-3 flex items-center gap-1 cursor-pointer">
+            <button onClick={() => navigate(alertsPath)} className="text-xs text-primary hover:underline mt-3 flex items-center gap-1 cursor-pointer">
               <ArrowLeft className="w-3 h-3" /> Back to Alerts
             </button>
           </div>

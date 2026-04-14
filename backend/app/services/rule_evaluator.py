@@ -7,6 +7,7 @@ logic while preserving rule outputs consumed by the scoring pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
 
 
 @dataclass
@@ -14,6 +15,7 @@ class RuleEvaluation:
     risk_score: float
     rule_violations: list[str]
     shap_contributions: list[str]
+    typology_contributions: dict[str, float] = field(default_factory=dict)
 
 
 class PythonRuleEvaluator:
@@ -23,6 +25,14 @@ class PythonRuleEvaluator:
         risk_score = 0.0
         rule_violations: list[str] = []
         shap_contributions: list[str] = []
+        typology_contributions: dict[str, float] = {}
+
+        def add_typology_contribution(typology: str, score_delta: float) -> None:
+            if typology not in rule_violations:
+                rule_violations.append(typology)
+            typology_contributions[typology] = (
+                typology_contributions.get(typology, 0.0) + score_delta
+            )
 
         amount = float(txn.get("amount", 0.0) or 0.0)
         channel = str(txn.get("channel", "IMPS") or "IMPS")
@@ -48,7 +58,7 @@ class PythonRuleEvaluator:
 
         if velocity_1h >= 5:
             risk_score += 25
-            rule_violations.append("RAPID_LAYERING")
+            add_typology_contribution("RAPID_LAYERING", 25)
             shap_contributions.append(
                 f"High 1-hour transaction velocity ({velocity_1h} txns): +25"
             )
@@ -61,35 +71,33 @@ class PythonRuleEvaluator:
         # High-value transfers moving with bursty velocity indicate layering.
         if amount >= 500000 and velocity_1h >= 2 and not is_dormant:
             risk_score += 40
-            if "RAPID_LAYERING" not in rule_violations:
-                rule_violations.append("RAPID_LAYERING")
+            add_typology_contribution("RAPID_LAYERING", 40)
             shap_contributions.append(
                 f"High-value multi-hop burst ({velocity_1h} txns in 1h): +40"
             )
 
         if 800000 <= amount <= 990000:
             risk_score += 22
-            rule_violations.append("STRUCTURING")
+            add_typology_contribution("STRUCTURING", 22)
             shap_contributions.append("Amount near CTR reporting threshold: +22")
 
         # Smurfing signal for repeated sub-threshold transfers in a day.
         if 40000 <= amount < 50000 and velocity_24h >= 3:
             structuring_boost = min(65, 24 + max(0, velocity_24h - 3) * 9)
             risk_score += structuring_boost
-            if "STRUCTURING" not in rule_violations:
-                rule_violations.append("STRUCTURING")
+            add_typology_contribution("STRUCTURING", structuring_boost)
             shap_contributions.append(
                 f"Repeated sub-threshold transfers ({velocity_24h} in 24h): +{structuring_boost}"
             )
 
         if is_dormant:
             risk_score += 45
-            rule_violations.append("DORMANT_AWAKENING")
+            add_typology_contribution("DORMANT_AWAKENING", 45)
             shap_contributions.append("Dormant account reactivation: +45")
 
         if device_account_count > 3:
             risk_score += 30
-            rule_violations.append("MULE_NETWORK")
+            add_typology_contribution("MULE_NETWORK", 30)
             shap_contributions.append(
                 f"Shared device across {device_account_count} accounts: +30"
             )
@@ -101,11 +109,11 @@ class PythonRuleEvaluator:
         # Round-tripping marker used by synthetic and replay ingestion flows.
         if (from_account and to_account and from_account == to_account) or round_trip_marker:
             risk_score += 35
-            if "ROUND_TRIPPING" not in rule_violations:
-                rule_violations.append("ROUND_TRIPPING")
+            add_typology_contribution("ROUND_TRIPPING", 35)
             shap_contributions.append("Round-tripping movement pattern: +35")
             if amount >= 250000:
                 risk_score += 15
+                add_typology_contribution("ROUND_TRIPPING", 15)
                 shap_contributions.append("High-value round-trip amount: +15")
 
         if velocity_24h >= 10:
@@ -118,6 +126,7 @@ class PythonRuleEvaluator:
             risk_score=risk_score,
             rule_violations=rule_violations,
             shap_contributions=shap_contributions,
+            typology_contributions=typology_contributions,
         )
 
 

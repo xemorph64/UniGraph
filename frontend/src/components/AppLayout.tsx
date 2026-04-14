@@ -51,6 +51,7 @@ function toHeaderNotification(alert: BackendAlert): HeaderNotification {
 function AppContent() {
   const location = useLocation();
   const navigate = useNavigate();
+  const txnPrefix = new URLSearchParams(location.search).get("txnPrefix")?.trim() || "";
 
   const pageName = breadcrumbMap[location.pathname] || "Dashboard";
   const [notifOpen, setNotifOpen] = useState(false);
@@ -60,11 +61,36 @@ function AppContent() {
   const [recentNotifications, setRecentNotifications] = useState<HeaderNotification[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  const scopedPath = useCallback(
+    (path: string, extras?: Record<string, string>) => {
+      const query = new URLSearchParams();
+      if (txnPrefix) {
+        query.set("txnPrefix", txnPrefix);
+      }
+      Object.entries(extras || {}).forEach(([key, value]) => {
+        if (value) {
+          query.set(key, value);
+        }
+      });
+      const suffix = query.toString();
+      return suffix ? `${path}?${suffix}` : path;
+    },
+    [txnPrefix],
+  );
+
   const loadHeaderData = useCallback(async () => {
     try {
       const [txnResp, alertResp] = await Promise.all([
-        listTransactions({ page: 1, pageSize: 1 }),
-        listAlerts({ page: 1, pageSize: 5 }),
+        listTransactions({
+          page: 1,
+          pageSize: 1,
+          txnIdPrefix: txnPrefix || undefined,
+        }),
+        listAlerts({
+          page: 1,
+          pageSize: 5,
+          transactionIdPrefix: txnPrefix || undefined,
+        }),
       ]);
       setTransactionCount(txnResp.total ?? txnResp.items.length);
       setAlertCount(alertResp.total ?? alertResp.items.length);
@@ -72,7 +98,7 @@ function AppContent() {
     } catch {
       // Keep the current UI state when backend polling fails.
     }
-  }, []);
+  }, [txnPrefix]);
 
   useEffect(() => {
     void loadHeaderData();
@@ -86,6 +112,11 @@ function AppContent() {
     const disconnect = connectAlertsWebSocket(
       "layout-header-ui",
       (incomingAlert) => {
+        const incomingTxnId = incomingAlert.transaction_id || "";
+        if (txnPrefix && !incomingTxnId.startsWith(txnPrefix)) {
+          return;
+        }
+
         setRecentNotifications((prev) => {
           const next = [toHeaderNotification(incomingAlert), ...prev.filter((item) => item.alertId !== incomingAlert.id)];
           return next.slice(0, 5);
@@ -96,7 +127,7 @@ function AppContent() {
     );
 
     return disconnect;
-  }, []);
+  }, [txnPrefix]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -167,7 +198,7 @@ function AppContent() {
                         className="px-3 py-2 border-b last:border-0 hover:bg-muted/50 cursor-pointer"
                         onClick={() => {
                           setNotifOpen(false);
-                          navigate(`/graph?alert=${encodeURIComponent(n.alertId)}`);
+                          navigate(scopedPath("/graph", { alert: n.alertId }));
                         }}
                       >
                         <p className="text-[13px] text-foreground">{n.text}</p>
@@ -197,7 +228,7 @@ function AppContent() {
       {/* Breadcrumb */}
       <div className="px-6 pt-4 pb-0">
         <div className="text-[13px] text-muted-foreground">
-          <span className="hover:text-primary cursor-pointer" onClick={() => navigate("/")}>Home</span>
+          <span className="hover:text-primary cursor-pointer" onClick={() => navigate(scopedPath("/"))}>Home</span>
           <span className="mx-1.5">›</span>
           <span className="text-foreground font-medium">{pageName}</span>
         </div>

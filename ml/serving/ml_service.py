@@ -32,10 +32,29 @@ fraud_coef = None
 risk_coef = None
 feature_mean = None
 feature_std = None
+serving_mode = "initializing"
+STRICT_THREE_MODEL_MODE = str(
+    os.getenv("ML_REQUIRE_ALL_MODELS", "true")
+).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _all_three_models_loaded() -> bool:
+    return gnn_model is not None and if_model is not None and xgb_model is not None
+
+
+def _missing_required_models() -> list[str]:
+    missing: list[str] = []
+    if gnn_model is None:
+        missing.append("gnn")
+    if if_model is None:
+        missing.append("if")
+    if xgb_model is None:
+        missing.append("xgb")
+    return missing
 
 
 def _channel_risk(channel: str) -> float:
@@ -447,6 +466,266 @@ def _sigmoid(arr: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-arr))
 
 
+def _build_runtime_xgb_feature_row(
+    gnn_score: float,
+    if_score: float,
+    default_graph: dict,
+    default_txn: dict,
+    default_acct: dict,
+    rule_violations: list[str],
+) -> list[float]:
+    amount = float(default_txn.get("amount", 0.0) or 0.0)
+    is_dormant = 1.0 if bool(default_txn.get("is_dormant", False)) else 0.0
+
+    return [
+        1.0,
+        math.log1p(max(amount, 0.0)),
+        _channel_risk(default_txn.get("channel", "IMPS")),
+        float(default_txn.get("velocity_1h", 0) or 0),
+        float(default_txn.get("velocity_24h", 0) or 0),
+        float(default_txn.get("device_account_count", 1) or 1),
+        is_dormant,
+        float(gnn_score),
+        float(if_score),
+        float(default_graph.get("connected_suspicious_nodes", 0) or 0),
+        float(default_graph.get("community_risk_score", 0.0) or 0.0),
+        float(default_graph.get("pagerank", 0.0) or 0.0),
+        float(default_graph.get("betweenness_centrality", 0.0) or 0.0),
+        float(default_graph.get("in_degree_24h", 0) or 0),
+        float(default_graph.get("out_degree_24h", 0) or 0),
+        float(default_graph.get("shortest_path_to_fraud", 0.0) or 0.0),
+        float(default_graph.get("neighbor_fraud_ratio", 0.0) or 0.0),
+        float(default_acct.get("customer_age", 0.0) or 0.0),
+        float(default_acct.get("account_age_days", 0) or 0),
+        float(default_acct.get("kyc_tier", 1) or 1),
+        float(default_acct.get("avg_monthly_balance", 0.0) or 0.0),
+        float(default_txn.get("transaction_count_30d", 0) or 0),
+        float(default_txn.get("avg_txn_amount_30d", 0.0) or 0.0),
+        float(default_txn.get("device_count_30d", 0) or 0),
+        float(default_txn.get("ip_count_30d", 0) or 0),
+        float(default_txn.get("avg_txn_amount", 0.0) or 0.0),
+        float(default_txn.get("std_txn_amount", 0.0) or 0.0),
+        float(default_txn.get("max_txn_amount", 0.0) or 0.0),
+        float(default_txn.get("min_txn_amount", 0.0) or 0.0),
+        float(default_txn.get("hour_of_day", 0) or 0),
+        float(default_txn.get("day_of_week", 0) or 0),
+        float(bool(default_txn.get("is_weekend", False))),
+        float(bool(default_txn.get("is_holiday", False))),
+        float(default_txn.get("geo_distance_from_home", 0.0) or 0.0),
+        float(bool(default_txn.get("device_risk_flag", False))),
+        float(default_txn.get("counterparty_risk_score", 0.0) or 0.0),
+        float(bool(default_txn.get("is_international", False))),
+        float(default_txn.get("channel_switch_count", 0) or 0),
+        float(len(rule_violations or [])),
+    ]
+
+
+class _LocalIsolationForestAdapter:
+    def __init__(self, model, scaler=None):
+        self.model = model
+        self.scaler = scaler
+
+    def score_to_0_100(self, features: np.ndarray) -> float:
+        arr = np.asarray(features, dtype=np.float64)
+        if self.scaler is not None:
+            arr = self.scaler.transform(arr)
+
+        if hasattr(self.model, "score_samples"):
+            raw = self.model.score_samples(arr)
+        elif hasattr(self.model, "decision_function"):
+            raw = self.model.decision_function(arr)
+        else:
+            raise RuntimeError("Isolation model does not support score_samples")
+
+        raw = np.asarray(raw, dtype=np.float64).reshape(-1)
+        normalized = _sigmoid(raw * 8.0)
+        return float(np.clip(np.mean(normalized) * 100.0, 0.0, 100.0))
+
+
+class _LocalXGBoostAdapter:
+    def __init__(self, model):
+        self.model = model
+
+    def prepare_features(
+        self,
+        gnn_score: float,
+        if_score: float,
+        default_graph: dict,
+        default_txn: dict,
+        default_acct: dict,
+        rule_violations: list[str],
+    ) -> np.ndarray:
+        row = _build_runtime_xgb_feature_row(
+            gnn_score,
+            if_score,
+            default_graph,
+            default_txn,
+            default_acct,
+            rule_violations,
+        )
+        return np.asarray([row], dtype=np.float64)
+
+    def predict_risk_score(self, features: np.ndarray) -> int:
+        arr = np.asarray(features, dtype=np.float64)
+
+        if hasattr(self.model, "predict_proba"):
+            probs = np.asarray(self.model.predict_proba(arr), dtype=np.float64)
+            if probs.ndim == 2 and probs.shape[1] >= 2:
+                score = float(probs[0, 1]) * 100.0
+            else:
+                score = float(probs.reshape(-1)[0]) * 100.0
+        elif hasattr(self.model, "predict"):
+            pred = float(np.asarray(self.model.predict(arr), dtype=np.float64).reshape(-1)[0])
+            score = pred * 100.0 if pred <= 1.0 else pred
+        else:
+            score = 50.0
+
+        return int(np.clip(round(score), 0, 100))
+
+
+def _bootstrap_tabular_models(*, bootstrap_if: bool, bootstrap_xgb: bool) -> bool:
+    global if_model, xgb_model, if_scaler, model_version
+
+    if not bootstrap_if and not bootstrap_xgb:
+        return True
+
+    data_source = _repo_root() / "fraud_scenarios.sql"
+    if not data_source.exists():
+        print(f"Bootstrap source not found: {data_source}")
+        return False
+
+    try:
+        x, y_fraud, y_risk = _load_training_rows_from_fraud_scenarios(data_source)
+
+        if bootstrap_if:
+            from sklearn.ensemble import IsolationForest
+            from sklearn.preprocessing import StandardScaler
+
+            x_no_bias = x[:, 1:]
+            scaler = StandardScaler()
+            x_scaled = scaler.fit_transform(x_no_bias)
+
+            contamination = float(np.clip(np.mean(y_fraud), 0.01, 0.35))
+            if_estimator = IsolationForest(
+                n_estimators=200,
+                contamination=contamination,
+                random_state=42,
+            )
+            if_estimator.fit(x_scaled)
+
+            if_scaler = scaler
+            if_model = _LocalIsolationForestAdapter(if_estimator, scaler)
+
+        if bootstrap_xgb:
+            y_class = (y_fraud >= 0.5).astype(np.int64)
+            if np.unique(y_class).size < 2:
+                y_class = (y_risk >= 60.0).astype(np.int64)
+            if np.unique(y_class).size < 2:
+                median_risk = float(np.median(y_risk))
+                y_class = (y_risk >= median_risk).astype(np.int64)
+
+            model_tag = "xgb"
+            estimator = None
+            try:
+                from xgboost import XGBClassifier
+
+                estimator = XGBClassifier(
+                    n_estimators=120,
+                    max_depth=4,
+                    learning_rate=0.08,
+                    subsample=0.9,
+                    colsample_bytree=0.9,
+                    objective="binary:logistic",
+                    eval_metric="logloss",
+                    random_state=42,
+                    n_jobs=1,
+                    verbosity=0,
+                )
+            except Exception:
+                from sklearn.ensemble import GradientBoostingClassifier
+
+                estimator = GradientBoostingClassifier(random_state=42)
+                model_tag = "gb"
+
+            estimator.fit(x, y_class)
+            xgb_model = _LocalXGBoostAdapter(estimator)
+            model_version = (
+                f"unigraph-ml-service-bootstrap-{model_tag}-v1-fraud-scenarios"
+            )
+
+        print(
+            "Bootstrapped tabular models from "
+            f"{data_source} with {x.shape[0]} rows "
+            f"(bootstrap_if={bootstrap_if}, bootstrap_xgb={bootstrap_xgb})"
+        )
+        return True
+    except Exception as exc:
+        print(f"Could not bootstrap tabular models: {exc}")
+        return False
+
+
+def _bootstrap_gnn_model() -> bool:
+    global gnn_model, model_version
+
+    data_source = _repo_root() / "fraud_scenarios.sql"
+    if not data_source.exists():
+        print(f"Graph bootstrap source not found: {data_source}")
+        return False
+
+    try:
+        import torch
+        from ml.models.graphsage.model import GraphSAGEFraudDetector
+
+        x, y_fraud, y_risk = _load_training_rows_from_fraud_scenarios(data_source)
+        x_features = x[:, 1:] if x.shape[1] > 1 else x
+
+        y_class = (y_fraud >= 0.5).astype(np.float32)
+        if np.unique(y_class).size < 2:
+            y_class = (y_risk >= 60.0).astype(np.float32)
+        if np.unique(y_class).size < 2:
+            median_risk = float(np.median(y_risk))
+            y_class = (y_risk >= median_risk).astype(np.float32)
+
+        in_features = int(x_features.shape[1])
+        model = GraphSAGEFraudDetector(
+            in_features=in_features,
+            hidden_dim=64,
+            out_features=32,
+            num_layers=2,
+            dropout=0.1,
+        )
+
+        x_tensor = torch.tensor(x_features, dtype=torch.float32)
+        y_tensor = torch.tensor(y_class, dtype=torch.float32).view(-1, 1)
+
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=1e-4)
+        criterion = torch.nn.BCELoss()
+
+        model.train()
+        epochs = min(200, max(40, int(2000 / max(1, x_tensor.size(0)))))
+        for _ in range(epochs):
+            optimizer.zero_grad()
+            preds = model(x_tensor, edge_index=None)
+            loss = criterion(preds, y_tensor)
+            loss.backward()
+            optimizer.step()
+
+        model.eval()
+        gnn_model = model
+
+        if model_version == "unigraph-v1.0.0":
+            model_version = "unigraph-ml-service-bootstrap-graphsage-v1-fraud-scenarios"
+
+        print(
+            "Bootstrapped GraphSAGE model from "
+            f"{data_source} with {x_features.shape[0]} rows"
+        )
+        return True
+    except Exception as exc:
+        print(f"Could not bootstrap GraphSAGE model: {exc}")
+        return False
+
+
 def _align_xgb_features(features: np.ndarray) -> np.ndarray:
     """Align feature width to trained XGBoost expectation.
 
@@ -494,7 +773,8 @@ def _align_if_features(features: np.ndarray) -> np.ndarray:
 
 
 def _train_fallback_models() -> None:
-    global fallback_ready, fraud_coef, risk_coef, feature_mean, feature_std, model_version
+    global fallback_ready, fraud_coef, risk_coef, feature_mean, feature_std
+    global model_version, serving_mode
     data_source = _repo_root() / "fraud_scenarios.sql"
 
     if not data_source.exists():
@@ -513,6 +793,7 @@ def _train_fallback_models() -> None:
     feature_std[feature_std < 1e-6] = 1.0
 
     fallback_ready = True
+    serving_mode = "fallback_linear"
     model_version = f"unigraph-ml-service-{fallback_version}-fraud-scenarios"
     print(f"Trained fallback models from {data_source} with {x.shape[0]} rows")
 
@@ -535,7 +816,21 @@ class MLScoringResponse(BaseModel):
 
 
 async def load_models(model_dir: str = "/models"):
-    global gnn_model, if_model, xgb_model, shap_explainer, feature_engineer, if_scaler
+    global gnn_model, if_model, xgb_model, shap_explainer, feature_engineer
+    global if_scaler, fallback_ready, serving_mode
+
+    # Reset state on startup/reload to avoid stale globals from previous attempts.
+    gnn_model = None
+    if_model = None
+    xgb_model = None
+    shap_explainer = None
+    feature_engineer = None
+    if_scaler = None
+    fallback_ready = False
+    serving_mode = "initializing"
+
+    artifact_if_loaded = False
+    artifact_xgb_loaded = False
 
     try:
         import torch
@@ -561,9 +856,10 @@ async def load_models(model_dir: str = "/models"):
         gnn_model = None
         print(f"Could not load GNN model: {e}")
 
-    try:
-        from ml.models.isolation_forest.model import IsolationForestDetector
+    if gnn_model is None:
+        _bootstrap_gnn_model()
 
+    try:
         if_path = os.path.join(model_dir, "isolation_forest_model.pkl")
         if os.path.exists(if_path):
             import pickle
@@ -571,38 +867,37 @@ async def load_models(model_dir: str = "/models"):
             with open(if_path, "rb") as f:
                 payload = pickle.load(f)
 
-            # Support both direct model pickles and dict-wrapped training artifacts.
+            candidate_model = payload
+            candidate_scaler = None
             if isinstance(payload, dict):
-                if_model = payload.get("model")
-                if_scaler = payload.get("scaler")
+                candidate_model = payload.get("model")
+                candidate_scaler = payload.get("scaler")
+
+            if candidate_model is None:
+                raise RuntimeError("Isolation Forest payload missing model")
+
+            if hasattr(candidate_model, "score_to_0_100"):
+                if_model = candidate_model
+                if_scaler = candidate_scaler
+            elif hasattr(candidate_model, "score_samples") or hasattr(
+                candidate_model, "decision_function"
+            ):
+                if_model = _LocalIsolationForestAdapter(
+                    candidate_model,
+                    candidate_scaler,
+                )
+                if_scaler = candidate_scaler
             else:
-                if hasattr(payload, "score_to_0_100"):
-                    if_model = payload
-                elif hasattr(payload, "score_samples"):
-                    # Wrap raw sklearn IsolationForest into project adapter.
-                    wrapped_if = IsolationForestDetector()
-                    wrapped_if.model = payload
-                    if_model = wrapped_if
-                else:
-                    if_model = payload
-                if_scaler = None
+                raise RuntimeError("Unsupported Isolation Forest payload type")
+
+            artifact_if_loaded = True
             print("Loaded Isolation Forest model")
+        else:
+            print(f"Isolation Forest artifact not found at {if_path}")
     except Exception as e:
         print(f"Could not load IF model: {e}")
 
     try:
-        from ml.models.xgboost_ensemble.model import XGBoostEnsembleScorer
-        shap_explainer_cls = None
-        try:
-            from ml.models.xgboost_ensemble.shap_explainer import SHAPExplainer
-
-            shap_explainer_cls = SHAPExplainer
-        except Exception as shap_import_error:
-            # SHAP is optional for scoring. Keep XGBoost loading even if explainability deps are absent.
-            print(
-                f"SHAP unavailable; continuing without SHAP explainer: {shap_import_error}"
-            )
-
         xgb_path = os.path.join(model_dir, "xgboost_model.pkl")
         if os.path.exists(xgb_path):
             import pickle
@@ -610,32 +905,33 @@ async def load_models(model_dir: str = "/models"):
             with open(xgb_path, "rb") as f:
                 payload = pickle.load(f)
 
-            # Support both direct model pickles and dict-wrapped training artifacts.
+            candidate_model = payload
             if isinstance(payload, dict):
-                xgb_model = payload.get("model")
-                if shap_explainer is None:
-                    shap_explainer = payload.get("shap_explainer")
-            else:
-                if hasattr(payload, "prepare_features") and hasattr(payload, "predict_risk_score"):
-                    xgb_model = payload
-                elif hasattr(payload, "predict_proba"):
-                    # Wrap raw xgboost classifier into project adapter.
-                    wrapped_xgb = XGBoostEnsembleScorer()
-                    wrapped_xgb.model = payload
-                    xgb_model = wrapped_xgb
-                else:
-                    xgb_model = payload
+                candidate_model = payload.get("model")
+                explain = payload.get("shap_explainer")
+                if shap_explainer is None and hasattr(explain, "explain"):
+                    shap_explainer = explain
 
-            try:
-                if (
-                    shap_explainer is None
-                    and shap_explainer_cls is not None
-                    and hasattr(xgb_model, "model")
-                ):
-                    shap_explainer = shap_explainer_cls(xgb_model.model)
-            except Exception:
-                pass
+            if candidate_model is None:
+                raise RuntimeError("XGBoost payload missing model")
+
+            if hasattr(candidate_model, "prepare_features") and hasattr(
+                candidate_model,
+                "predict_risk_score",
+            ):
+                xgb_model = candidate_model
+            elif hasattr(candidate_model, "predict_proba") or hasattr(
+                candidate_model,
+                "predict",
+            ):
+                xgb_model = _LocalXGBoostAdapter(candidate_model)
+            else:
+                raise RuntimeError("Unsupported XGBoost payload type")
+
+            artifact_xgb_loaded = True
             print("Loaded XGBoost model")
+        else:
+            print(f"XGBoost artifact not found at {xgb_path}")
     except Exception as e:
         print(f"Could not load XGBoost model: {e}")
 
@@ -647,12 +943,49 @@ async def load_models(model_dir: str = "/models"):
     except Exception as e:
         print(f"Could not load Feature Engineer: {e}")
 
-    # Graph model is optional at runtime; keep fallback for missing tabular models.
+    # First preference: artifact models. Second preference: in-memory bootstrap.
+    # Last resort: deterministic linear fallback.
     if if_model is None or xgb_model is None:
-        try:
-            _train_fallback_models()
-        except Exception as e:
-            print(f"Could not train fallback models: {e}")
+        bootstrap_ok = _bootstrap_tabular_models(
+            bootstrap_if=if_model is None,
+            bootstrap_xgb=xgb_model is None,
+        )
+        if not bootstrap_ok and (if_model is None or xgb_model is None):
+            try:
+                _train_fallback_models()
+            except Exception as e:
+                print(f"Could not train fallback models: {e}")
+
+    all_three_loaded = _all_three_models_loaded()
+    missing_required_models = _missing_required_models()
+
+    if STRICT_THREE_MODEL_MODE and not all_three_loaded:
+        serving_mode = "strict_blocked_missing_models"
+    elif all_three_loaded:
+        if artifact_if_loaded and artifact_xgb_loaded:
+            serving_mode = "artifact_models"
+        elif artifact_if_loaded or artifact_xgb_loaded:
+            serving_mode = "mixed_artifact_bootstrap"
+        else:
+            serving_mode = "bootstrap_tabular"
+    elif if_model is not None and xgb_model is not None:
+        if artifact_if_loaded and artifact_xgb_loaded:
+            serving_mode = "artifact_models_tabular_only"
+        elif artifact_if_loaded or artifact_xgb_loaded:
+            serving_mode = "mixed_artifact_bootstrap_tabular_only"
+        else:
+            serving_mode = "bootstrap_tabular_only"
+    elif fallback_ready:
+        serving_mode = "fallback_linear"
+    else:
+        serving_mode = "heuristic_only"
+
+    print(
+        "ML service operating mode: "
+        f"{serving_mode}, model_version={model_version}, "
+        f"strict_three_model_mode={STRICT_THREE_MODEL_MODE}, "
+        f"missing_required_models={missing_required_models}"
+    )
 
 
 async def score_transaction(
@@ -660,6 +993,14 @@ async def score_transaction(
     graph_features: Optional[dict] = None,
     graph_subgraph: Optional[dict] = None,
 ) -> dict:
+    if STRICT_THREE_MODEL_MODE:
+        missing_required_models = _missing_required_models()
+        if missing_required_models:
+            raise RuntimeError(
+                "strict_three_model_mode_enabled_missing_models:"
+                + ",".join(missing_required_models)
+            )
+
     start_time = time.time()
 
     txn_id = enriched_txn.get("txn_id", "unknown")
@@ -700,14 +1041,23 @@ async def score_transaction(
             tx_features = extract_tx_features(enriched_txn)
             tx_array = np.array([tx_features], dtype=np.float64)
             tx_array = _align_if_features(tx_array)
-            if if_scaler is not None:
-                tx_array = if_scaler.transform(tx_array)
-            if_scores = if_model.score_samples(tx_array)
-            if hasattr(if_model, "score_to_0_100") and len(if_scores) > 1:
-                if_score = if_model.score_to_0_100(np.array([if_scores[0]]))[0] / 100.0
+
+            if hasattr(if_model, "score_to_0_100"):
+                if_score_0_100 = float(if_model.score_to_0_100(tx_array))
+                if_score = float(np.clip(if_score_0_100 / 100.0, 0.0, 1.0))
             else:
-                # Stable single-row mapping when batch normalization cannot be applied.
-                raw_score = float(if_scores[0])
+                model_input = tx_array
+                if if_scaler is not None:
+                    model_input = if_scaler.transform(model_input)
+
+                if hasattr(if_model, "score_samples"):
+                    raw_scores = if_model.score_samples(model_input)
+                elif hasattr(if_model, "decision_function"):
+                    raw_scores = if_model.decision_function(model_input)
+                else:
+                    raise RuntimeError("Unsupported IF scorer type")
+
+                raw_score = float(np.asarray(raw_scores, dtype=np.float64).reshape(-1)[0])
                 if_score = float(np.clip(1.0 / (1.0 + np.exp(12.0 * raw_score)), 0.0, 1.0))
         except Exception as e:
             print(f"IF scoring error: {e}")
@@ -716,19 +1066,36 @@ async def score_transaction(
     tx_features = extract_tx_features(enriched_txn)
     default_graph = graph_features or {}
     default_txn = {
+        "amount": enriched_txn.get("amount", 0.0),
+        "channel": enriched_txn.get("channel", "IMPS"),
         "velocity_1h": enriched_txn.get("velocity_1h", 0),
         "velocity_24h": enriched_txn.get("velocity_24h", 0),
-        "amount_zscore": enriched_txn.get("amount_zscore", 0.0),
-        "channel_switch_count": enriched_txn.get("channel_switch_count", 0),
-        "geo_distance": enriched_txn.get("geo_distance_from_home", 0.0),
-    }
-    default_acct = {
-        "account_age_days": enriched_txn.get("account_age_days", 0),
-        "kyc_tier": enriched_txn.get("kyc_tier", 1),
+        "device_account_count": enriched_txn.get("device_account_count", 1),
+        "is_dormant": bool(enriched_txn.get("is_dormant", False)),
         "transaction_count_30d": enriched_txn.get("transaction_count_30d", 0),
         "avg_txn_amount_30d": enriched_txn.get("avg_txn_amount_30d", 0.0),
         "device_count_30d": enriched_txn.get("device_count_30d", 0),
         "ip_count_30d": enriched_txn.get("ip_count_30d", 0),
+        "avg_txn_amount": enriched_txn.get("avg_txn_amount", 0.0),
+        "std_txn_amount": enriched_txn.get("std_txn_amount", 0.0),
+        "max_txn_amount": enriched_txn.get("max_txn_amount", 0.0),
+        "min_txn_amount": enriched_txn.get("min_txn_amount", 0.0),
+        "hour_of_day": enriched_txn.get("hour_of_day", 0),
+        "day_of_week": enriched_txn.get("day_of_week", 0),
+        "is_weekend": bool(enriched_txn.get("is_weekend", False)),
+        "is_holiday": bool(enriched_txn.get("is_holiday", False)),
+        "geo_distance_from_home": enriched_txn.get("geo_distance_from_home", 0.0),
+        "device_risk_flag": bool(enriched_txn.get("device_risk_flag", False)),
+        "counterparty_risk_score": enriched_txn.get("counterparty_risk_score", 0.0),
+        "is_international": bool(enriched_txn.get("is_international", False)),
+        "amount_zscore": enriched_txn.get("amount_zscore", 0.0),
+        "channel_switch_count": enriched_txn.get("channel_switch_count", 0),
+    }
+    default_acct = {
+        "customer_age": enriched_txn.get("customer_age", 0.0),
+        "account_age_days": enriched_txn.get("account_age_days", 0),
+        "kyc_tier": enriched_txn.get("kyc_tier", 1),
+        "avg_monthly_balance": enriched_txn.get("avg_monthly_balance", 0.0),
     }
 
     rule_violations = enriched_txn.get("rule_violations", [])
@@ -846,6 +1213,18 @@ async def startup():
 
 @app.post("/api/v1/ml/score", response_model=MLScoringResponse)
 async def score(request: MLScoringRequest):
+    if STRICT_THREE_MODEL_MODE:
+        missing_required_models = _missing_required_models()
+        if missing_required_models:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "strict_three_model_mode_enabled",
+                    "missing_models": missing_required_models,
+                    "serving_mode": serving_mode,
+                },
+            )
+
     result = await score_transaction(
         request.enriched_transaction,
         request.graph_features,
@@ -856,6 +1235,18 @@ async def score(request: MLScoringRequest):
 
 @app.post("/api/v1/ml/score/batch")
 async def score_batch(requests: list[MLScoringRequest]):
+    if STRICT_THREE_MODEL_MODE:
+        missing_required_models = _missing_required_models()
+        if missing_required_models:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "strict_three_model_mode_enabled",
+                    "missing_models": missing_required_models,
+                    "serving_mode": serving_mode,
+                },
+            )
+
     results = []
     for req in requests:
         result = await score_transaction(
@@ -869,9 +1260,24 @@ async def score_batch(requests: list[MLScoringRequest]):
 
 @app.get("/api/v1/ml/health")
 async def health():
+    missing_required_models = _missing_required_models()
+    if STRICT_THREE_MODEL_MODE:
+        ready_for_scoring = len(missing_required_models) == 0
+    else:
+        ready_for_scoring = (
+            _all_three_models_loaded()
+            or (if_model is not None and xgb_model is not None)
+            or fallback_ready
+        )
+
     return {
-        "status": "healthy",
+        "status": "healthy" if ready_for_scoring else "degraded",
         "model_version": model_version,
+        "serving_mode": serving_mode,
+        "strict_three_model_mode": STRICT_THREE_MODEL_MODE,
+        "required_models": ["gnn", "if", "xgb"],
+        "missing_required_models": missing_required_models,
+        "ready_for_scoring": ready_for_scoring,
         "gnn_loaded": gnn_model is not None,
         "if_loaded": if_model is not None,
         "xgb_loaded": xgb_model is not None,
@@ -883,6 +1289,9 @@ async def health():
 async def metrics():
     return {
         "model_version": model_version,
+        "serving_mode": serving_mode,
+        "strict_three_model_mode": STRICT_THREE_MODEL_MODE,
+        "all_three_models_loaded": _all_three_models_loaded(),
         "inference_count": 0,
         "avg_latency_ms": 0.0,
     }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Activity, AlertTriangle, ShieldAlert, FileCheck, TrendingUp, Target, ArrowUpRight } from "lucide-react";
 import RiskScoreBar, { getRiskColor } from "@/components/RiskScoreBar";
 import {
@@ -29,6 +29,8 @@ const fraudTypeColors: Record<string, string> = {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const txnPrefix = searchParams.get("txnPrefix")?.trim() || "";
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [alerts, setAlerts] = useState<AlertCardLike[]>([]);
   const [transactionTotal, setTransactionTotal] = useState(0);
@@ -40,15 +42,32 @@ export default function Dashboard() {
   const loadData = useCallback(async () => {
     try {
       const [txnResp, alertResp] = await Promise.all([
-        listTransactions({ page: 1, pageSize: 120 }),
-        listAlerts({ page: 1, pageSize: 120 }),
+        listTransactions({
+          page: 1,
+          pageSize: 120,
+          txnIdPrefix: txnPrefix || undefined,
+        }),
+        listAlerts({
+          page: 1,
+          pageSize: 120,
+          transactionIdPrefix: txnPrefix || undefined,
+        }),
       ]);
 
       const txnById = new Map<string, BackendTransaction>();
       txnResp.items.forEach((txn) => txnById.set(txn.id, txn));
 
       setTransactions(txnResp.items.slice(0, 15).map(toUiTransaction));
-      setAlerts(alertResp.items.map((alert) => toAlertCard(alert, txnById.get(alert.transaction_id))));
+      const dedupedAlerts = new Map<string, AlertCardLike>();
+      for (const alert of alertResp.items) {
+        const card = toAlertCard(alert, txnById.get(alert.transaction_id));
+        const dedupeKey = card.transactionId || card.id;
+        if (!dedupedAlerts.has(dedupeKey)) {
+          dedupedAlerts.set(dedupeKey, card);
+        }
+      }
+
+      setAlerts(Array.from(dedupedAlerts.values()));
       setTransactionTotal(txnResp.total || txnResp.items.length);
       setError(null);
     } catch (err) {
@@ -56,7 +75,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [txnPrefix]);
 
   useEffect(() => {
     loadData();
@@ -68,7 +87,20 @@ export default function Dashboard() {
     const disconnect = connectAlertsWebSocket(
       "dashboard-ui",
       async (incomingAlert) => {
-        setAlerts((prev) => [toAlertCard(incomingAlert), ...prev.filter((a) => a.id !== incomingAlert.id)].slice(0, 120));
+        const incomingTxnId = incomingAlert.transaction_id || "";
+        if (txnPrefix && !incomingTxnId.startsWith(txnPrefix)) {
+          return;
+        }
+
+        const incomingCard = toAlertCard(incomingAlert);
+        setAlerts((prev) => [
+          incomingCard,
+          ...prev.filter(
+            (a) =>
+              a.id !== incomingAlert.id &&
+              (!incomingCard.transactionId || a.transactionId !== incomingCard.transactionId),
+          ),
+        ].slice(0, 120));
         if (!incomingAlert.transaction_id) return;
 
         try {
@@ -85,7 +117,7 @@ export default function Dashboard() {
     );
 
     return disconnect;
-  }, []);
+  }, [txnPrefix]);
 
   const criticalAlerts = useMemo(() => alerts.filter((a) => a.riskScore >= 90).length, [alerts]);
 
@@ -205,7 +237,13 @@ export default function Dashboard() {
                     key={t.txnId + i}
                     className={`border-b border-border/50 hover:bg-info/5 cursor-pointer ${newRowId === t.txnId ? "animate-flash-row" : ""}`}
                     style={{ background: i % 2 === 1 ? "hsl(var(--table-stripe))" : undefined }}
-                    onClick={() => navigate("/transactions")}
+                    onClick={() =>
+                      navigate(
+                        txnPrefix
+                          ? `/transactions?txnPrefix=${encodeURIComponent(txnPrefix)}`
+                          : "/transactions",
+                      )
+                    }
                   >
                     <td className="p-2.5 text-[13px] font-mono font-medium text-primary truncate">{t.txnId}</td>
                     <td className="p-2.5 text-[13px] font-mono text-foreground truncate">{t.source}</td>
@@ -279,7 +317,16 @@ export default function Dashboard() {
       <div className="bg-card border border-border rounded-[10px] overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
           <span className="text-foreground font-semibold text-sm">Recent High-Risk Alerts</span>
-          <button onClick={() => navigate("/alerts")} className="text-xs text-primary hover:underline font-medium cursor-pointer">
+          <button
+            onClick={() =>
+              navigate(
+                txnPrefix
+                  ? `/alerts?txnPrefix=${encodeURIComponent(txnPrefix)}`
+                  : "/alerts",
+              )
+            }
+            className="text-xs text-primary hover:underline font-medium cursor-pointer"
+          >
             View All →
           </button>
         </div>
@@ -330,7 +377,14 @@ export default function Dashboard() {
                   <td className="p-3 text-right">
                     <button
                       className="text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded font-semibold hover:bg-primary/90 cursor-pointer inline-flex items-center gap-1"
-                      onClick={(e) => { e.stopPropagation(); navigate(`/graph?alert=${a.id}`); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(
+                          txnPrefix
+                            ? `/graph?alert=${encodeURIComponent(a.id)}&txnPrefix=${encodeURIComponent(txnPrefix)}`
+                            : `/graph?alert=${encodeURIComponent(a.id)}`,
+                        );
+                      }}
                     >
                       Investigate <ArrowUpRight className="w-3 h-3" />
                     </button>

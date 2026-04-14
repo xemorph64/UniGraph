@@ -90,6 +90,38 @@ def test_primary_fraud_type_is_none_when_no_typology_rules_fire():
     assert result["primary_fraud_type"] is None
 
 
+def test_primary_fraud_type_uses_strongest_typology_contribution():
+    txn = {
+        "txn_id": "TXN-CONTRIB-001",
+        "from_account": "ACC-CONTRIB-001",
+        "to_account": "ACC-CONTRIB-002",
+        "amount": 49000.0,
+        "channel": "UPI",
+        "velocity_1h": 1,
+        "velocity_24h": 7,
+        "is_dormant": False,
+        "device_account_count": 5,
+    }
+
+    result = asyncio.run(fraud_scorer.score_transaction(txn))
+
+    assert "STRUCTURING" in result["rule_violations"]
+    assert "MULE_NETWORK" in result["rule_violations"]
+    assert result["primary_fraud_type"] == "STRUCTURING"
+
+
+def test_primary_fraud_type_tie_break_uses_priority_order():
+    selected = fraud_scorer._select_primary_fraud_type(
+        ["RAPID_LAYERING", "DORMANT_AWAKENING"],
+        typology_contributions={
+            "RAPID_LAYERING": 45.0,
+            "DORMANT_AWAKENING": 45.0,
+        },
+    )
+
+    assert selected == "DORMANT_AWAKENING"
+
+
 def test_score_transaction_marks_ml_blended_source(monkeypatch):
     async def fake_graph_features(_txn):
         return {}

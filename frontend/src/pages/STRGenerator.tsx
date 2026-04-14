@@ -35,9 +35,28 @@ function formatDate(value?: string): string {
   });
 }
 
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export default function STRGenerator() {
   const [params] = useSearchParams();
   const alertParam = params.get("alert") || "";
+  const txnPrefix = params.get("txnPrefix")?.trim() || "";
 
   const [alerts, setAlerts] = useState<AlertCardLike[]>([]);
   const [selectedAlert, setSelectedAlert] = useState("");
@@ -89,8 +108,8 @@ export default function STRGenerator() {
     setLoading(true);
     try {
       const [alertResp, txnResp] = await Promise.all([
-        listAlerts({ page: 1, pageSize: 200 }),
-        listTransactions({ page: 1, pageSize: 500 }),
+        listAlerts({ page: 1, pageSize: 200, transactionIdPrefix: txnPrefix || undefined }),
+        listTransactions({ page: 1, pageSize: 500, txnIdPrefix: txnPrefix || undefined }),
       ]);
 
       const txnById = new Map(txnResp.items.map((txn) => [txn.id, txn]));
@@ -115,7 +134,7 @@ export default function STRGenerator() {
     } finally {
       setLoading(false);
     }
-  }, [alertParam]);
+  }, [alertParam, txnPrefix]);
 
   useEffect(() => {
     void loadLiveData();
@@ -155,11 +174,95 @@ export default function STRGenerator() {
     }
   };
 
+  const downloadBlob = useCallback((fileName: string, content: string, mimeType: string) => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleDownloadXml = useCallback(() => {
+    const xml = [
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+      "<strReport>",
+      `  <reportType>${escapeXml(reportType)}</reportType>`,
+      `  <strReference>${escapeXml(strId || "PENDING")}</strReference>`,
+      `  <alertId>${escapeXml(activeAlert?.id || "")}</alertId>`,
+      `  <accountId>${escapeXml(activeAlert?.account || "")}</accountId>`,
+      `  <fraudType>${escapeXml(activeAlert?.fraudType || "")}</fraudType>`,
+      `  <channel>${escapeXml(activeAlert?.channel || "")}</channel>`,
+      `  <amount>${escapeXml(activeAlert?.amount || "")}</amount>`,
+      `  <generatedAt>${escapeXml(new Date().toISOString())}</generatedAt>`,
+      "  <narrative>",
+      escapeXml(narrative || "No narrative available"),
+      "  </narrative>",
+      "</strReport>",
+    ].join("\n");
+
+    const reportToken = (strId || activeAlert?.id || "draft").replace(/[^a-zA-Z0-9_-]/g, "_");
+    downloadBlob(`str-${reportToken}.xml`, xml, "application/xml;charset=utf-8");
+    toast.success("XML exported");
+  }, [activeAlert, downloadBlob, narrative, reportType, strId]);
+
+  const handleDownloadPdf = useCallback(() => {
+    const printWindow = window.open("", "_blank", "noopener,noreferrer,width=980,height=760");
+    if (!printWindow) {
+      toast.error("Enable pop-ups to export PDF");
+      return;
+    }
+
+    const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>STR ${escapeHtml(strId || activeAlert?.id || "Draft")}</title>
+    <style>
+      body { font-family: Georgia, serif; margin: 28px; color: #111827; }
+      h1 { margin: 0 0 8px; font-size: 20px; }
+      .meta { margin-bottom: 16px; font-size: 12px; color: #374151; }
+      .meta div { margin: 3px 0; }
+      .section-title { margin: 18px 0 8px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+      .narrative { white-space: pre-wrap; line-height: 1.45; font-size: 13px; }
+      @media print { body { margin: 16mm; } }
+    </style>
+  </head>
+  <body>
+    <h1>Suspicious Transaction Report</h1>
+    <div class="meta">
+      <div><strong>Report Type:</strong> ${escapeHtml(reportType)}</div>
+      <div><strong>STR Reference:</strong> ${escapeHtml(strId || "Pending")}</div>
+      <div><strong>Alert ID:</strong> ${escapeHtml(activeAlert?.id || "-")}</div>
+      <div><strong>Account:</strong> ${escapeHtml(activeAlert?.account || "-")}</div>
+      <div><strong>Amount:</strong> ${escapeHtml(activeAlert?.amount || "-")}</div>
+      <div><strong>Channel:</strong> ${escapeHtml(activeAlert?.channel || "-")}</div>
+      <div><strong>Generated At:</strong> ${escapeHtml(formatDate(new Date().toISOString()))}</div>
+    </div>
+    <div class="section-title">Grounds for Suspicion</div>
+    <div class="narrative">${escapeHtml(narrative || "No narrative available")}</div>
+  </body>
+</html>`;
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    toast.success("Print dialog opened. Choose Save as PDF");
+  }, [activeAlert, narrative, reportType, strId]);
+
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-bold text-primary">STR Generator</h1>
-        <p className="text-xs text-muted-foreground mt-1">Generate and submit FIU-IND aligned STRs from live alert data</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Generate and submit FIU-IND aligned STRs from live alert data
+          {txnPrefix ? ` · scope ${txnPrefix}` : ""}
+        </p>
         {error && <p className="text-xs text-danger mt-1">{error}</p>}
       </div>
 
@@ -281,18 +384,24 @@ export default function STRGenerator() {
             <div className="border-b border-border px-5 py-3 flex items-center justify-between">
               <span className="text-sm font-semibold text-foreground">Live Preview</span>
               <div className="flex gap-2">
-                <button onClick={() => toast.success("XML export placeholder")}
+                <button
+                  onClick={handleDownloadXml}
                   className="text-[11px] border border-border rounded px-3 py-1.5 bg-card text-foreground hover:bg-muted flex items-center gap-1 cursor-pointer">
                   <Download className="w-3 h-3" /> Download XML
                 </button>
-                <button onClick={() => toast.success("PDF export placeholder")}
+                <button
+                  onClick={handleDownloadPdf}
                   className="text-[11px] border border-border rounded px-3 py-1.5 bg-card text-foreground hover:bg-muted flex items-center gap-1 cursor-pointer">
-                  <FileText className="w-3 h-3" /> Download PDF
+                  <FileText className="w-3 h-3" /> Print / Save PDF
                 </button>
                 <button
                   onClick={async () => {
-                    await navigator.clipboard.writeText(narrative);
-                    toast.success("Copied to clipboard");
+                    try {
+                      await navigator.clipboard.writeText(narrative);
+                      toast.success("Copied to clipboard");
+                    } catch {
+                      toast.error("Clipboard access blocked");
+                    }
                   }}
                   className="text-[11px] border border-border rounded px-2 py-1.5 bg-card text-foreground hover:bg-muted cursor-pointer"
                 >

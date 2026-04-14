@@ -1,15 +1,13 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Search, Download, Flag, Check, Info } from "lucide-react";
+import { Search, Download, Info } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import type { Transaction } from "@/data/transactions";
 import RiskScoreBar, { getRiskColor, getRiskLabel } from "@/components/RiskScoreBar";
-import { toast } from "sonner";
 import { connectAlertsWebSocket, getTransaction, listTransactions, toUiTransaction } from "@/lib/unigraph-api";
 
 const CHANNELS = ["All", "UPI", "NEFT", "RTGS", "IMPS", "CASH", "Card"];
 const STATUSES = ["All", "Flagged", "Cleared", "Pending"];
-const DATE_RANGES = ["Today", "This Week", "This Month"];
 
 function formatScoringSource(value?: string) {
   if (value === "ml_blended") return "ML Blended";
@@ -23,6 +21,11 @@ function scoringSourceClass(value?: string) {
   return "bg-muted text-muted-foreground border-border";
 }
 
+function formatLatency(value?: number) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "-";
+  return `${value.toFixed(2)} ms`;
+}
+
 export default function TransactionMonitor() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -33,14 +36,10 @@ export default function TransactionMonitor() {
   const [wsConnected, setWsConnected] = useState(false);
   const [channelFilter, setChannelFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
-  const [dateRange, setDateRange] = useState("Today");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [perPage, setPerPage] = useState(15);
   const [selected, setSelected] = useState<Transaction | null>(null);
-  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
-  const [exportLoading, setExportLoading] = useState(false);
-  const [bulkFlagLoading, setBulkFlagLoading] = useState(false);
 
   const loadTransactions = useCallback(async () => {
     try {
@@ -102,22 +101,64 @@ export default function TransactionMonitor() {
   const flaggedCount = filtered.filter(t => t.status === "Flagged").length;
   const clearedCount = filtered.filter(t => t.status === "Cleared").length;
   const pendingCount = filtered.filter(t => t.status === "Pending").length;
+  const avgLatencyMs = useMemo(() => {
+    const values = filtered
+      .map((t) => t.scoringLatencyMs)
+      .filter((value): value is number => typeof value === "number" && !Number.isNaN(value));
+    if (!values.length) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }, [filtered]);
 
-  const toggleRow = (id: string) => {
-    setSelectedRows(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
+  const exportFilteredCsv = useCallback(() => {
+    const headers = [
+      "txn_id",
+      "from_account",
+      "to_account",
+      "amount_num",
+      "channel",
+      "timestamp_iso",
+      "risk_score",
+      "status",
+      "flags",
+      "scoring_source",
+      "model_version",
+    ];
 
-  const toggleAll = () => {
-    if (selectedRows.size === paged.length) {
-      setSelectedRows(new Set());
-    } else {
-      setSelectedRows(new Set(paged.map(t => t.txnId)));
-    }
-  };
+    const escapeCsv = (value: unknown) => {
+      const text = String(value ?? "");
+      if (text.includes(",") || text.includes("\"") || text.includes("\n")) {
+        return `"${text.replace(/\"/g, '""')}"`;
+      }
+      return text;
+    };
+
+    const lines = filtered.map((t) => [
+      t.txnId,
+      t.source,
+      t.destination,
+      t.amountNum,
+      t.channel,
+      t.timestampIso || "",
+      t.riskScore,
+      t.status,
+      t.flags.join("|"),
+      t.scoringSource || "",
+      t.modelVersion || "",
+    ]);
+
+    const csv = [headers.join(","), ...lines.map((line) => line.map(escapeCsv).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const prefixLabel = txnPrefix || "all";
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    link.href = url;
+    link.download = `transactions-${prefixLabel}-${stamp}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [filtered, txnPrefix]);
 
   return (
     <div className="space-y-4">
@@ -153,17 +194,6 @@ export default function TransactionMonitor() {
               className="w-full bg-background border border-border rounded-md py-2 pl-9 pr-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
             />
           </div>
-          <div className="flex gap-1">
-            {DATE_RANGES.map(dr => (
-              <button
-                key={dr}
-                onClick={() => setDateRange(dr)}
-                className={`text-xs px-3 py-2 rounded-md cursor-pointer ${dateRange === dr ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
-              >
-                {dr}
-              </button>
-            ))}
-          </div>
           <select
             value={statusFilter}
             onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }}
@@ -172,18 +202,10 @@ export default function TransactionMonitor() {
             {STATUSES.map(s => <option key={s} value={s}>{s === "All" ? "All Status" : s}</option>)}
           </select>
           <button
-            disabled={exportLoading}
-            onClick={() => { setExportLoading(true); setTimeout(() => { setExportLoading(false); toast.success("Transactions exported as CSV"); }, 1500); }}
+            onClick={exportFilteredCsv}
             className="text-xs h-9 px-3 border border-border rounded-md bg-card text-foreground hover:bg-muted flex items-center gap-1 cursor-pointer disabled:opacity-50"
           >
-            <Download className="w-3 h-3" /> {exportLoading ? "Exporting..." : "Export CSV"}
-          </button>
-          <button
-            disabled={bulkFlagLoading}
-            onClick={() => { setBulkFlagLoading(true); setTimeout(() => { setBulkFlagLoading(false); toast.success(`${selectedRows.size} transactions flagged`); }, 1500); }}
-            className="text-xs h-9 px-3 border border-border rounded-md bg-card text-foreground hover:bg-muted flex items-center gap-1 cursor-pointer disabled:opacity-50"
-          >
-            <Flag className="w-3 h-3" /> {bulkFlagLoading ? "Flagging..." : "Bulk Flag"}
+            <Download className="w-3 h-3" /> Export CSV
           </button>
         </div>
       </div>
@@ -194,6 +216,9 @@ export default function TransactionMonitor() {
         <span className="bg-card border border-border rounded-md px-3 py-1.5 text-danger">Flagged: <strong>{flaggedCount}</strong></span>
         <span className="bg-card border border-border rounded-md px-3 py-1.5 text-success">Cleared: <strong>{clearedCount}</strong></span>
         <span className="bg-card border border-border rounded-md px-3 py-1.5 text-warning">Pending: <strong>{pendingCount}</strong></span>
+        <span className="bg-card border border-border rounded-md px-3 py-1.5">
+          Avg Latency: <strong>{formatLatency(avgLatencyMs ?? undefined)}</strong>
+        </span>
       </div>
 
       {/* Table */}
@@ -202,9 +227,6 @@ export default function TransactionMonitor() {
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-table-header text-table-header-foreground text-[11px] font-semibold tracking-wide uppercase">
-                <th className="p-2.5 w-10">
-                  <input type="checkbox" checked={selectedRows.size === paged.length && paged.length > 0} onChange={toggleAll} className="cursor-pointer" />
-                </th>
                 <th className="text-left p-2.5">TXN ID</th>
                 <th className="text-left p-2.5">Date & Time</th>
                 <th className="text-left p-2.5">From</th>
@@ -213,6 +235,7 @@ export default function TransactionMonitor() {
                 <th className="text-left p-2.5">Channel</th>
                 <th className="text-center p-2.5">Risk Score</th>
                 <th className="text-left p-2.5">Score Source</th>
+                <th className="text-right p-2.5">Latency</th>
                 <th className="text-left p-2.5">Flags</th>
                 <th className="text-left p-2.5">Status</th>
                 <th className="text-center p-2.5">Action</th>
@@ -233,9 +256,6 @@ export default function TransactionMonitor() {
                   style={{ background: i % 2 === 1 ? "hsl(var(--table-stripe))" : undefined }}
                   onClick={() => setSelected(t)}
                 >
-                  <td className="p-2.5" onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={selectedRows.has(t.txnId)} onChange={() => toggleRow(t.txnId)} className="cursor-pointer" />
-                  </td>
                   <td className="p-2.5 font-mono font-medium text-primary">{t.txnId}</td>
                   <td className="p-2.5 text-muted-foreground">{t.timestamp}</td>
                   <td className="p-2.5 font-mono">{t.source}</td>
@@ -250,6 +270,7 @@ export default function TransactionMonitor() {
                       {formatScoringSource(t.scoringSource)}
                     </span>
                   </td>
+                  <td className="p-2.5 text-right font-mono text-[11px] text-muted-foreground">{formatLatency(t.scoringLatencyMs)}</td>
                   <td className="p-2.5">
                     <div className="flex flex-wrap gap-0.5">
                       {t.flags.map((f) => (
@@ -342,6 +363,7 @@ export default function TransactionMonitor() {
                     </span>
                   </div>
                   <div className="text-muted-foreground">Model Version</div><div className="truncate" title={selected.modelVersion || "-"}>{selected.modelVersion || "-"}</div>
+                  <div className="text-muted-foreground">Scoring Latency</div><div>{formatLatency(selected.scoringLatencyMs)}</div>
                 </div>
 
                 {/* Risk Score */}
@@ -394,16 +416,13 @@ export default function TransactionMonitor() {
 
                 <button
                   className="w-full h-10 bg-primary text-primary-foreground rounded-md text-sm font-semibold cursor-pointer hover:bg-primary/90"
-                  onClick={() => { setSelected(null); toast.success("Added to active investigation"); }}
+                  onClick={() => setSelected(null)}
                 >
                   Add to Investigation
                 </button>
-                <button
-                  className="w-full h-10 border border-border bg-card text-foreground rounded-md text-sm font-medium cursor-pointer hover:bg-muted"
-                  onClick={() => { setSelected(null); toast.success("Transaction marked as cleared"); }}
-                >
-                  <Check className="w-4 h-4 inline mr-1" /> Mark Cleared
-                </button>
+                <p className="text-[11px] text-muted-foreground">
+                  Status updates are driven by backend case workflow endpoints.
+                </p>
               </div>
             </>
           )}
