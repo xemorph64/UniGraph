@@ -14,8 +14,7 @@ import {
   Gavel,
   Bell
 } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
-import { cn } from "@/src/lib/utils";
+import { cn } from "@/lib/utils";
 import { formatImpactPoints, parseShapReasons } from "@/lib/shap-explain";
 
 interface Alert {
@@ -103,9 +102,8 @@ const AlertRow: React.FC<AlertRowProps> = ({ alert, isExpanded, onToggle }) => {
         </td>
         <td className="px-6 py-4">{isExpanded ? <Shrink className="w-4 h-4 text-primary" /> : <ChevronRight className="w-4 h-4 text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity" />}</td>
       </tr>
-      <AnimatePresence>
-        {isExpanded && (
-          <motion.tr initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="bg-surface-container">
+      {isExpanded && (
+        <tr className="bg-surface-container">
             <td className="px-10 pb-8 pt-2" colSpan={6}>
               <div className="grid grid-cols-12 gap-8">
                 <div className="col-span-7 bg-surface-container-low p-6 rounded-xl border border-outline-variant/10">
@@ -198,9 +196,8 @@ const AlertRow: React.FC<AlertRowProps> = ({ alert, isExpanded, onToggle }) => {
                 </div>
               </div>
             </td>
-          </motion.tr>
-        )}
-      </AnimatePresence>
+          </tr>
+      )}
     </>
   );
 };

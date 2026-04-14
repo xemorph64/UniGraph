@@ -15,8 +15,7 @@ import {
   Building2,
   MapPin
 } from "lucide-react";
-import { motion } from "motion/react";
-import { cn } from "@/src/lib/utils";
+import { cn } from "@/lib/utils";
 
 export default function STRReports() {
   const [step, setStep] = useState(2);

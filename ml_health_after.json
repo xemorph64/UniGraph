@@ -1,0 +1,1 @@
+{"status":"healthy","model_version":"unigraph-ml-service-bootstrap-xgb-v1-fraud-scenarios","serving_mode":"bootstrap_tabular","strict_three_model_mode":true,"required_models":["gnn","if","xgb"],"missing_required_models":[],"ready_for_scoring":true,"gnn_loaded":true,"if_loaded":true,"xgb_loaded":true,"fallback_ready":false}
