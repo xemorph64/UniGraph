@@ -60,9 +60,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadData();
-    const poller = setInterval(loadData, 15000);
+    const pollIntervalMs = wsConnected ? 30000 : 15000;
+    const poller = setInterval(loadData, pollIntervalMs);
     return () => clearInterval(poller);
-  }, [loadData]);
+  }, [loadData, wsConnected]);
 
   useEffect(() => {
     const disconnect = connectAlertsWebSocket(

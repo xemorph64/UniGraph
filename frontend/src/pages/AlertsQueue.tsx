@@ -130,9 +130,10 @@ export default function AlertsQueue() {
 
   useEffect(() => {
     loadAlerts();
-    const poller = setInterval(loadAlerts, 15000);
+    const pollIntervalMs = wsConnected ? 30000 : 15000;
+    const poller = setInterval(loadAlerts, pollIntervalMs);
     return () => clearInterval(poller);
-  }, [loadAlerts]);
+  }, [loadAlerts, wsConnected]);
 
   useEffect(() => {
     const disconnect = connectAlertsWebSocket(

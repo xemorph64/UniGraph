@@ -62,3 +62,43 @@ powershell -ExecutionPolicy Bypass -File ingestion/flink/submit-jobs.ps1 -JobMan
 - raw-transactions: source transaction events (mock/debezium)
 - enriched-transactions: enrichment output
 - rule-violations: windowed velocity anomalies
+
+## 4) High-Throughput Bridge Mode
+
+Run the Kafka-to-backend bridge with concurrent ingest workers:
+
+```bash
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python ingestion/neo4j_writer.py \
+	--bootstrap-servers localhost:19092 \
+	--backend-url http://localhost:8000/api/v1 \
+	--ingest-workers 128 \
+	--max-inflight 8000 \
+	--ingest-batch-size 200 \
+	--ingest-batch-wait-ms 20 \
+	--disable-rule-reingest \
+	--http-timeout-seconds 8
+```
+
+Notes:
+
+- `--ingest-workers`: number of concurrent backend POST workers.
+- `--max-inflight`: bounded queue for backpressure.
+- `--ingest-batch-size`: send queued records to `/transactions/ingest/batch` in chunks for much higher throughput.
+- `--ingest-batch-wait-ms`: max wait before flushing a partial batch.
+- `--disable-rule-reingest`: avoids duplicate backend reingest on rule topic for max throughput.
+- `--reingest-cooldown-seconds`: throttle rule-triggered reingest if reingest is enabled.
+
+## 5) Throughput Benchmarks
+
+Stream benchmark (Kafka -> Flink):
+
+```bash
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python ingestion/benchmark_ingestion.py --bootstrap localhost:19092 --count 10000 --timeout 240 --profile optimized
+```
+
+Backend ingest benchmark (HTTP ingest API):
+
+```bash
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python scripts/benchmark_backend_ingest.py --url http://localhost:8000/api/v1/transactions/ingest --count 10000 --concurrency 256 --timeout 8
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python scripts/benchmark_backend_ingest.py --url http://localhost:8000/api/v1/transactions/ingest/batch --count 20000 --batch-size 200 --concurrency 32 --timeout 8
+```

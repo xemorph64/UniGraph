@@ -39,7 +39,19 @@ def _connect_postgres(host: str, port: int, dbname: str, user: str, password: st
     )
 
 
-def _insert_test_transaction(conn) -> tuple[str, str]:
+def _get_transactions_columns(conn) -> set[str]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'transactions'
+            """
+        )
+        return {row[0] for row in cur.fetchall()}
+
+
+def _insert_test_transaction(conn, columns: set[str]) -> tuple[str, str]:
     from_account = "UBI301000DBTEST01"
     to_account = "UBI301000DBTEST99"
     customer_id = "CUST-DB-E2E-0001"
@@ -48,50 +60,117 @@ def _insert_test_transaction(conn) -> tuple[str, str]:
 
     with conn.cursor() as cur:
         cur.execute("DELETE FROM public.transactions WHERE txn_id = %s", (TEST_TXN_ID,))
-        cur.execute(
-            """
-            INSERT INTO public.transactions (
-                txn_id,
-                from_account,
-                to_account,
-                amount,
-                channel,
-                "timestamp",
-                customer_id,
-                device_fingerprint,
-                ip_address,
-                location
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                TEST_TXN_ID,
-                from_account,
-                to_account,
-                999500.00,
-                "RTGS",
-                _iso_now(),
-                customer_id,
-                device,
-                ip_addr,
-                Json({"lat": 22.5726, "lon": 88.3639}),
-            ),
-        )
+
+        modern_columns = {
+            "from_account",
+            "to_account",
+            "timestamp",
+            "customer_id",
+            "device_fingerprint",
+            "location",
+        }
+        legacy_columns = {
+            "sender_account",
+            "receiver_account",
+            "txn_timestamp",
+            "device_id",
+            "geo_lat",
+            "geo_lon",
+            "narration",
+        }
+
+        if modern_columns.issubset(columns):
+            cur.execute(
+                """
+                INSERT INTO public.transactions (
+                    txn_id,
+                    from_account,
+                    to_account,
+                    amount,
+                    channel,
+                    "timestamp",
+                    customer_id,
+                    device_fingerprint,
+                    ip_address,
+                    location
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    TEST_TXN_ID,
+                    from_account,
+                    to_account,
+                    999500.00,
+                    "RTGS",
+                    _iso_now(),
+                    customer_id,
+                    device,
+                    ip_addr,
+                    Json({"lat": 22.5726, "lon": 88.3639}),
+                ),
+            )
+        elif legacy_columns.issubset(columns):
+            cur.execute(
+                """
+                INSERT INTO public.transactions (
+                    txn_id,
+                    sender_account,
+                    receiver_account,
+                    amount,
+                    channel,
+                    txn_timestamp,
+                    device_id,
+                    ip_address,
+                    geo_lat,
+                    geo_lon,
+                    narration,
+                    status,
+                    is_flagged,
+                    fraud_flag_type
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    TEST_TXN_ID,
+                    from_account,
+                    to_account,
+                    999500.00,
+                    "RTGS",
+                    datetime.now(timezone.utc),
+                    device,
+                    ip_addr,
+                    22.5726,
+                    88.3639,
+                    "db-ingestion-verifier",
+                    "SUCCESS",
+                    False,
+                    None,
+                ),
+            )
+        else:
+            raise RuntimeError(
+                "Unsupported public.transactions schema for verifier. "
+                f"Columns present: {sorted(columns)}"
+            )
+
     conn.commit()
     return from_account, customer_id
 
 
-def _emit_rapid_updates(conn, count: int = 2) -> None:
+def _emit_rapid_updates(conn, columns: set[str], count: int = 2) -> None:
     # Generate quick successive CDC updates so anomaly windows can observe velocity-like bursts.
+    timestamp_column = '"timestamp"' if "timestamp" in columns else "txn_timestamp"
     for _ in range(count):
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 UPDATE public.transactions
                 SET amount = amount + 1000.00,
-                    "timestamp" = %s
+                    {timestamp_column} = %s
                 WHERE txn_id = %s
                 """,
-                (_iso_now(), TEST_TXN_ID),
+                (
+                    _iso_now() if timestamp_column == '"timestamp"' else datetime.now(timezone.utc),
+                    TEST_TXN_ID,
+                ),
             )
         conn.commit()
         time.sleep(0.2)
@@ -168,12 +247,13 @@ def run(
     )
 
     try:
-        from_account, customer_id = _insert_test_transaction(conn)
+        columns = _get_transactions_columns(conn)
+        from_account, customer_id = _insert_test_transaction(conn, columns)
 
         result = _assert_topics(
             bootstrap=bootstrap,
             timeout_s=timeout_s,
-            on_ready=lambda: _emit_rapid_updates(conn, count=2),
+            on_ready=lambda: _emit_rapid_updates(conn, columns=columns, count=2),
         )
         if result["missing"]:
             return {

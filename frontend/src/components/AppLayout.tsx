@@ -76,11 +76,12 @@ function AppContent() {
 
   useEffect(() => {
     void loadHeaderData();
+    const pollIntervalMs = wsConnected ? 30000 : 15000;
     const poller = setInterval(() => {
       void loadHeaderData();
-    }, 15000);
+    }, pollIntervalMs);
     return () => clearInterval(poller);
-  }, [loadHeaderData]);
+  }, [loadHeaderData, wsConnected]);
 
   useEffect(() => {
     const disconnect = connectAlertsWebSocket(

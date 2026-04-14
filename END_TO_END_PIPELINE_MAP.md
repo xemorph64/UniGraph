@@ -457,7 +457,7 @@ This defines constraints/indexes for Account, Transaction, Alert, Case, STRRepor
 
 - scripts/ingest_sql_transactions.py (legacy guard requires --allow-legacy)
 - scripts/simulate_transactions.py (legacy guard requires --allow-legacy)
-- verify_pipeline_integrity.py (older utility script, not aligned with current runtime contracts)
+- Older utility verify_pipeline_integrity.py was removed during cleanup; use ingestion/verify_db_ingestion.py and ingestion/verify_e2e_ingestion.py for current validation.
 
 ---
 

@@ -6,7 +6,9 @@ All queries must be async.
 
 from neo4j import AsyncGraphDatabase, AsyncDriver
 from typing import Optional, Any
+import asyncio
 import json
+import time
 import structlog
 from ..config import settings
 
@@ -17,6 +19,27 @@ class Neo4jService:
     def __init__(self):
         self.driver: Optional[AsyncDriver] = None
         self._gds_graph_name = "unigraph-flow-live"
+        self._graph_feature_cache: dict[str, tuple[float, dict]] = {}
+        self._graph_feature_ttl_seconds = 10.0
+        self._graph_feature_cache_max_entries = 5000
+
+    def _invalidate_graph_feature_cache(self, *account_ids: Optional[str]) -> None:
+        for account_id in account_ids:
+            if account_id:
+                self._graph_feature_cache.pop(account_id, None)
+
+    def _prune_graph_feature_cache(self, now_monotonic: float) -> None:
+        expired_keys = [
+            account_id
+            for account_id, (expiry, _) in self._graph_feature_cache.items()
+            if expiry <= now_monotonic
+        ]
+        for account_id in expired_keys:
+            self._graph_feature_cache.pop(account_id, None)
+
+        while len(self._graph_feature_cache) > self._graph_feature_cache_max_entries:
+            oldest_account_id = next(iter(self._graph_feature_cache))
+            self._graph_feature_cache.pop(oldest_account_id, None)
 
     @staticmethod
     def _serialize_temporals(data: dict) -> dict:
@@ -74,6 +97,10 @@ class Neo4jService:
         indexes = [
             "CREATE INDEX account_risk IF NOT EXISTS FOR (a:Account) ON (a.risk_score)",
             "CREATE INDEX txn_timestamp IF NOT EXISTS FOR (t:Transaction) ON (t.timestamp)",
+            "CREATE INDEX txn_channel IF NOT EXISTS FOR (t:Transaction) ON (t.channel)",
+            "CREATE INDEX txn_risk_score IF NOT EXISTS FOR (t:Transaction) ON (t.risk_score)",
+            "CREATE INDEX txn_from_account IF NOT EXISTS FOR (t:Transaction) ON (t.from_account)",
+            "CREATE INDEX txn_to_account IF NOT EXISTS FOR (t:Transaction) ON (t.to_account)",
             "CREATE INDEX alert_status IF NOT EXISTS FOR (al:Alert) ON (al.status)",
             "CREATE INDEX case_status IF NOT EXISTS FOR (c:Case) ON (c.status)",
             "CREATE INDEX str_status IF NOT EXISTS FOR (s:STRReport) ON (s.status)",
@@ -122,12 +149,38 @@ class Neo4jService:
                 is_dormant=is_dormant,
             )
             record = await result.single()
+            self._invalidate_graph_feature_cache(account_id)
             return dict(record["a"]) if record else {}
 
     async def create_transaction_node(self, txn: dict) -> dict:
         async with self.driver.session() as session:
             result = await session.run(
                 """
+                MERGE (src:Account {id: $from_account})
+                ON CREATE SET
+                    src.customer_id = $from_customer_id,
+                    src.account_type = 'SAVINGS',
+                    src.kyc_tier = 1,
+                    src.risk_score = $risk_score,
+                    src.is_dormant = $from_is_dormant,
+                    src.community_id = 0,
+                    src.pagerank = 0.0,
+                    src.created_at = datetime()
+                ON MATCH SET
+                    src.risk_score = $risk_score,
+                    src.is_dormant = $from_is_dormant
+
+                MERGE (dst:Account {id: $to_account})
+                ON CREATE SET
+                    dst.customer_id = $to_customer_id,
+                    dst.account_type = 'SAVINGS',
+                    dst.kyc_tier = 1,
+                    dst.risk_score = 0.0,
+                    dst.is_dormant = false,
+                    dst.community_id = 0,
+                    dst.pagerank = 0.0,
+                    dst.created_at = datetime()
+
                 MERGE (t:Transaction {id: $txn_id})
                 ON CREATE SET
                     t.amount = $amount,
@@ -139,6 +192,8 @@ class Neo4jService:
                     t.is_flagged = $is_flagged,
                     t.rule_violations = $rule_violations,
                     t.primary_fraud_type = $primary_fraud_type,
+                    t.model_version = $model_version,
+                    t.scoring_mode = $scoring_mode,
                     t.description = $description,
                     t.device_id = $device_id
                 ON MATCH SET
@@ -151,8 +206,20 @@ class Neo4jService:
                     t.is_flagged = $is_flagged,
                     t.rule_violations = $rule_violations,
                     t.primary_fraud_type = $primary_fraud_type,
+                    t.model_version = $model_version,
+                    t.scoring_mode = $scoring_mode,
                     t.description = $description,
                     t.device_id = $device_id
+
+                MERGE (src)-[r:SENT {txn_id: $txn_id}]->(dst)
+                ON CREATE SET
+                    r.amount = $amount,
+                    r.timestamp = datetime($timestamp),
+                    r.channel = $channel
+                ON MATCH SET
+                    r.amount = $amount,
+                    r.timestamp = datetime($timestamp),
+                    r.channel = $channel
                 RETURN t
                 """,
                 txn_id=txn["txn_id"],
@@ -161,32 +228,87 @@ class Neo4jService:
                 timestamp=txn.get("timestamp", "2026-04-10T00:00:00Z"),
                 from_account=txn["from_account"],
                 to_account=txn["to_account"],
+                from_customer_id=txn.get("from_customer_id", f"CUST-{txn['from_account']}"),
+                to_customer_id=txn.get("to_customer_id", f"CUST-{txn['to_account']}"),
+                from_is_dormant=bool(txn.get("from_is_dormant", False)),
                 risk_score=txn.get("risk_score", 0.0),
                 is_flagged=txn.get("is_flagged", False),
                 rule_violations=txn.get("rule_violations", []),
                 primary_fraud_type=txn.get("primary_fraud_type"),
+                model_version=txn.get("model_version"),
+                scoring_mode=txn.get("scoring_mode"),
                 description=txn.get("description", ""),
                 device_id=txn.get("device_id", "unknown"),
             )
-            await session.run(
+            record = await result.single()
+            self._invalidate_graph_feature_cache(
+                txn.get("from_account"), txn.get("to_account")
+            )
+            return dict(record["t"]) if record else {}
+
+    async def bulk_upsert_transactions(self, txns: list[dict]) -> int:
+        if not txns:
+            return 0
+
+        async with self.driver.session() as session:
+            result = await session.run(
                 """
-                MATCH (src:Account {id: $from_account})
-                MATCH (dst:Account {id: $to_account})
-                MERGE (src)-[r:SENT {txn_id: $txn_id}]->(dst)
+                UNWIND $txns AS txn
+
+                MERGE (src:Account {id: txn.from_account})
                 ON CREATE SET
-                    r.amount = $amount,
-                    r.timestamp = datetime($timestamp),
-                    r.channel = $channel
+                    src.customer_id = coalesce(txn.from_customer_id, 'CUST-' + txn.from_account),
+                    src.account_type = 'SAVINGS',
+                    src.kyc_tier = 1,
+                    src.risk_score = toFloat(coalesce(txn.risk_score, 0.0)),
+                    src.is_dormant = coalesce(txn.from_is_dormant, false),
+                    src.community_id = 0,
+                    src.pagerank = 0.0,
+                    src.created_at = datetime()
+                ON MATCH SET
+                    src.risk_score = toFloat(coalesce(txn.risk_score, 0.0)),
+                    src.is_dormant = coalesce(txn.from_is_dormant, false)
+
+                MERGE (dst:Account {id: txn.to_account})
+                ON CREATE SET
+                    dst.customer_id = coalesce(txn.to_customer_id, 'CUST-' + txn.to_account),
+                    dst.account_type = 'SAVINGS',
+                    dst.kyc_tier = 1,
+                    dst.risk_score = 0.0,
+                    dst.is_dormant = false,
+                    dst.community_id = 0,
+                    dst.pagerank = 0.0,
+                    dst.created_at = datetime()
+
+                MERGE (t:Transaction {id: txn.txn_id})
+                SET
+                    t.amount = toFloat(coalesce(txn.amount, 0.0)),
+                    t.channel = coalesce(txn.channel, 'IMPS'),
+                    t.timestamp = datetime(txn.timestamp),
+                    t.from_account = txn.from_account,
+                    t.to_account = txn.to_account,
+                    t.risk_score = toFloat(coalesce(txn.risk_score, 0.0)),
+                    t.is_flagged = coalesce(txn.is_flagged, false),
+                    t.rule_violations = coalesce(txn.rule_violations, []),
+                    t.primary_fraud_type = txn.primary_fraud_type,
+                    t.model_version = txn.model_version,
+                    t.scoring_mode = txn.scoring_mode,
+                    t.description = coalesce(txn.description, ''),
+                    t.device_id = coalesce(txn.device_id, 'unknown')
+
+                MERGE (src)-[r:SENT {txn_id: txn.txn_id}]->(dst)
+                SET
+                    r.amount = toFloat(coalesce(txn.amount, 0.0)),
+                    r.timestamp = datetime(txn.timestamp),
+                    r.channel = coalesce(txn.channel, 'IMPS')
+
+                RETURN count(t) as total
                 """,
-                from_account=txn["from_account"],
-                to_account=txn["to_account"],
-                txn_id=txn["txn_id"],
-                amount=txn["amount"],
-                timestamp=txn.get("timestamp", "2026-04-10T00:00:00Z"),
-                channel=txn.get("channel", "IMPS"),
+                txns=txns,
             )
             record = await result.single()
-            return dict(record["t"]) if record else {}
+            self._graph_feature_cache.clear()
+            return int(record["total"]) if record and record["total"] is not None else 0
 
     async def get_account_subgraph(self, account_id: str, hops: int = 2) -> dict:
         """Get N-hop subgraph for Cytoscape visualization."""
@@ -250,6 +372,11 @@ class Neo4jService:
         if not account_id:
             return defaults
 
+        now_monotonic = time.monotonic()
+        cached = self._graph_feature_cache.get(account_id)
+        if cached and cached[0] > now_monotonic:
+            return dict(cached[1])
+
         async with self.driver.session() as session:
             result = await session.run(
                 """
@@ -302,7 +429,7 @@ class Neo4jService:
             if not record:
                 return defaults
 
-            return {
+            features = {
                 "connected_suspicious_nodes": int(
                     record["connected_suspicious_nodes"] or 0
                 ),
@@ -320,6 +447,15 @@ class Neo4jService:
                 ),
                 "neighbor_fraud_ratio": float(record["neighbor_fraud_ratio"] or 0.0),
             }
+
+            self._graph_feature_cache[account_id] = (
+                now_monotonic + self._graph_feature_ttl_seconds,
+                features,
+            )
+            if len(self._graph_feature_cache) > self._graph_feature_cache_max_entries:
+                self._prune_graph_feature_cache(now_monotonic)
+
+            return features
 
     async def create_alert(self, alert: dict) -> dict:
         async with self.driver.session() as session:
@@ -442,35 +578,43 @@ class Neo4jService:
             params["min_risk_score"] = float(min_risk_score)
 
         where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+        count_params = {
+            key: value for key, value in params.items() if key not in {"limit", "skip"}
+        }
 
-        async with self.driver.session() as session:
-            total_result = await session.run(
-                f"""
-                MATCH (t:Transaction)
-                {where_clause}
-                RETURN count(t) as total
-                """,
-                **params,
-            )
-            total_record = await total_result.single()
-            total = int(total_record["total"]) if total_record else 0
+        async def _fetch_total() -> int:
+            async with self.driver.session() as session:
+                total_result = await session.run(
+                    f"""
+                    MATCH (t:Transaction)
+                    {where_clause}
+                    RETURN count(t) as total
+                    """,
+                    **count_params,
+                )
+                total_record = await total_result.single()
+                return int(total_record["total"]) if total_record else 0
 
-            result = await session.run(
-                f"""
-                MATCH (t:Transaction)
-                {where_clause}
-                RETURN t
-                ORDER BY t.timestamp DESC
-                SKIP $skip
-                LIMIT $limit
-                """,
-                **params,
-            )
+        async def _fetch_items() -> list[dict]:
+            async with self.driver.session() as session:
+                result = await session.run(
+                    f"""
+                    MATCH (t:Transaction)
+                    {where_clause}
+                    RETURN t
+                    ORDER BY t.timestamp DESC
+                    SKIP $skip
+                    LIMIT $limit
+                    """,
+                    **params,
+                )
 
-            items: list[dict] = []
-            async for record in result:
-                items.append(self._serialize_temporals(dict(record["t"])))
+                items: list[dict] = []
+                async for record in result:
+                    items.append(self._serialize_temporals(dict(record["t"])))
+                return items
 
+        total, items = await asyncio.gather(_fetch_total(), _fetch_items())
         return {"items": items, "total": total}
 
     async def create_case(
@@ -993,6 +1137,25 @@ class Neo4jService:
                     "open_alerts": int(record.get("total_alerts", 0) or 0),
                 }
             return {"accounts": 0, "transactions": 0, "alerts": 0, "open_alerts": 0}
+
+    async def clear_all_data(self) -> dict:
+        """Delete all graph nodes while preserving schema objects."""
+        async with self.driver.session() as session:
+            before_result = await session.run("MATCH (n) RETURN count(n) AS total_nodes")
+            before_record = await before_result.single()
+            nodes_before = int(before_record["total_nodes"] if before_record else 0)
+
+            await session.run("MATCH (n) DETACH DELETE n")
+
+            after_result = await session.run("MATCH (n) RETURN count(n) AS total_nodes")
+            after_record = await after_result.single()
+            nodes_after = int(after_record["total_nodes"] if after_record else 0)
+
+        return {
+            "nodes_before": nodes_before,
+            "nodes_after": nodes_after,
+            "nodes_deleted": max(0, nodes_before - nodes_after),
+        }
 
     async def find_fraud_patterns(self) -> list[dict]:
         """Find rapid layering patterns in the graph."""

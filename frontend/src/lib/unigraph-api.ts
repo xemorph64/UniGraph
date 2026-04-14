@@ -119,6 +119,8 @@ export interface IngestTransactionResponse {
   primary_fraud_type?: string | null;
   is_flagged: boolean;
   alert_id?: string | null;
+  model_version?: string;
+  scoring_mode?: string;
 }
 
 export interface BackendHealthResponse {
@@ -158,15 +160,42 @@ export interface GraphAnalyticsStatusResponse {
 export interface MlHealthResponse {
   status: string;
   model_version?: string;
+  scoring_mode?: string;
   gnn_loaded?: boolean;
   if_loaded?: boolean;
   xgb_loaded?: boolean;
   fallback_ready?: boolean;
+  strict_startup_enabled?: boolean;
+}
+
+export type DatasetKey = "100" | "200";
+
+export interface StreamDatasetResponse {
+  dataset: DatasetKey;
+  sql_file: string;
+  removed_previous_data: boolean;
+  purge: {
+    nodes_before: number;
+    nodes_after: number;
+    nodes_deleted: number;
+  };
+  totals: {
+    transactions_parsed: number;
+    ingest_success: number;
+    ingest_errors: number;
+    flagged: number;
+  };
+  duration_seconds: number;
+  message: string;
 }
 
 const API_BASE = (import.meta.env.VITE_BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 const API_PREFIX = `${API_BASE}/api/v1`;
 const ML_BASE = (import.meta.env.VITE_ML_SERVICE_URL || "http://localhost:8002").replace(/\/$/, "");
+const LIST_CACHE_TTL_MS = 3000;
+
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
+const getResponseCache = new Map<string, { expiresAt: number; value: unknown }>();
 
 function toQuery(params: Record<string, string | number | undefined>) {
   const query = new URLSearchParams();
@@ -204,6 +233,44 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function fetchJson<T>(path: string): Promise<T> {
   return requestJson<T>(path);
+}
+
+async function fetchJsonCached<T>(path: string, ttlMs = 0): Promise<T> {
+  const now = Date.now();
+  if (ttlMs > 0) {
+    const cached = getResponseCache.get(path);
+    if (cached && cached.expiresAt > now) {
+      return cached.value as T;
+    }
+  }
+
+  const inFlight = inFlightGetRequests.get(path);
+  if (inFlight) {
+    return inFlight as Promise<T>;
+  }
+
+  const request = fetchJson<T>(path)
+    .then((value) => {
+      if (ttlMs > 0) {
+        getResponseCache.set(path, { expiresAt: Date.now() + ttlMs, value });
+      }
+      return value;
+    })
+    .finally(() => {
+      inFlightGetRequests.delete(path);
+    });
+
+  inFlightGetRequests.set(path, request as Promise<unknown>);
+  return request;
+}
+
+function invalidateListCaches() {
+  const prefixes = ["/transactions?", "/alerts?", "/reports/str?"];
+  for (const key of getResponseCache.keys()) {
+    if (prefixes.some((prefix) => key.startsWith(prefix))) {
+      getResponseCache.delete(key);
+    }
+  }
 }
 
 async function fetchAbsoluteJson<T>(url: string): Promise<T> {
@@ -364,7 +431,7 @@ export async function listTransactions(params?: {
     min_risk_score: params?.minRiskScore,
     account_id: params?.accountId,
   });
-  return fetchJson<ListResponse<BackendTransaction>>(`/transactions?${query}`);
+  return fetchJsonCached<ListResponse<BackendTransaction>>(`/transactions?${query}`, LIST_CACHE_TTL_MS);
 }
 
 export async function getTransaction(txnId: string) {
@@ -383,7 +450,7 @@ export async function listAlerts(params?: {
     status: params?.status,
     min_risk_score: params?.minRiskScore,
   });
-  return fetchJson<ListResponse<BackendAlert>>(`/alerts?${query}`);
+  return fetchJsonCached<ListResponse<BackendAlert>>(`/alerts?${query}`, LIST_CACHE_TTL_MS);
 }
 
 export async function getAlert(alertId: string) {
@@ -407,17 +474,19 @@ export async function listStrReports(params?: {
     status: params?.status,
     account_id: params?.accountId,
   });
-  return fetchJson<ListResponse<STRReport>>(`/reports/str?${query}`);
+  return fetchJsonCached<ListResponse<STRReport>>(`/reports/str?${query}`, LIST_CACHE_TTL_MS);
 }
 
 export async function generateStrReport(alertId: string, caseNotes = "") {
-  return requestJson<STRGenerateResponse>("/reports/str/generate", {
+  const response = await requestJson<STRGenerateResponse>("/reports/str/generate", {
     method: "POST",
     body: JSON.stringify({
       alert_id: alertId,
       case_notes: caseNotes,
     }),
   });
+  invalidateListCaches();
+  return response;
 }
 
 export async function submitStrReport(params: {
@@ -425,7 +494,7 @@ export async function submitStrReport(params: {
   editedNarrative: string;
   digitalSignature: string;
 }) {
-  return requestJson<STRSubmitResponse>(`/reports/str/${encodeURIComponent(params.strId)}/submit`, {
+  const response = await requestJson<STRSubmitResponse>(`/reports/str/${encodeURIComponent(params.strId)}/submit`, {
     method: "POST",
     body: JSON.stringify({
       str_id: params.strId,
@@ -433,10 +502,12 @@ export async function submitStrReport(params: {
       digital_signature: params.digitalSignature,
     }),
   });
+  invalidateListCaches();
+  return response;
 }
 
 export async function ingestTransaction(payload: IngestTransactionRequest) {
-  return requestJson<IngestTransactionResponse>("/transactions/ingest", {
+  const response = await requestJson<IngestTransactionResponse>("/transactions/ingest", {
     method: "POST",
     body: JSON.stringify({
       txn_id: payload.txnId,
@@ -453,6 +524,8 @@ export async function ingestTransaction(payload: IngestTransactionRequest) {
       velocity_24h: payload.velocity24h || 0,
     }),
   });
+  invalidateListCaches();
+  return response;
 }
 
 export async function getBackendHealth() {
@@ -465,6 +538,15 @@ export async function getGraphAnalyticsStatus() {
 
 export async function getMlHealth() {
   return fetchAbsoluteJson<MlHealthResponse>(`${ML_BASE}/api/v1/ml/health`);
+}
+
+export async function streamDataset(dataset: DatasetKey) {
+  const response = await requestJson<StreamDatasetResponse>("/datasets/stream", {
+    method: "POST",
+    body: JSON.stringify({ dataset }),
+  });
+  invalidateListCaches();
+  return response;
 }
 
 export function connectAlertsWebSocket(

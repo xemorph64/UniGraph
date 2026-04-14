@@ -37,6 +37,27 @@ feature_std = None
 RUNTIME_XGB_FEATURE_WIDTH = 26
 
 
+def _to_bool_env(value: str) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _strict_startup_enabled() -> bool:
+    override = os.getenv("ML_STRICT_STARTUP")
+    if override is not None:
+        return _to_bool_env(override)
+
+    app_env = str(os.getenv("APP_ENV") or os.getenv("ENV") or "development").lower()
+    return app_env in {"prod", "production"}
+
+
+def _current_scoring_mode() -> str:
+    if xgb_model is not None:
+        return "full_ml"
+    if fallback_ready:
+        return "ml_fallback_linear"
+    return "ml_fallback_baseline"
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -571,6 +592,7 @@ class MLScoringResponse(BaseModel):
     xgboost_risk_score: int
     shap_top3: list[str]
     model_version: str
+    scoring_mode: str
     scoring_latency_ms: float
     timestamp: str
 
@@ -865,6 +887,7 @@ async def score_transaction(
         "xgboost_risk_score": risk_score,
         "shap_top3": shap_top3 or ["velocity_1h: +0.10", "amount_zscore: +0.05"],
         "model_version": model_version,
+        "scoring_mode": _current_scoring_mode(),
         "scoring_latency_ms": round(elapsed_ms, 2),
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }
@@ -911,6 +934,11 @@ def extract_tx_features(txn: dict) -> list:
 async def startup():
     model_dir = os.getenv("MODEL_DIR", "/models")
     await load_models(model_dir)
+    if _strict_startup_enabled() and xgb_model is None:
+        raise RuntimeError(
+            "Strict ML startup check failed: XGBoost scorer is not loaded. "
+            "Disable strict mode with ML_STRICT_STARTUP=false only for non-production runs."
+        )
 
 
 @app.post("/api/v1/ml/score", response_model=MLScoringResponse)
@@ -941,10 +969,12 @@ async def health():
     return {
         "status": "healthy",
         "model_version": model_version,
+        "scoring_mode": _current_scoring_mode(),
         "gnn_loaded": gnn_model is not None,
         "if_loaded": if_model is not None,
         "xgb_loaded": xgb_model is not None,
         "fallback_ready": fallback_ready,
+        "strict_startup_enabled": _strict_startup_enabled(),
     }
 
 

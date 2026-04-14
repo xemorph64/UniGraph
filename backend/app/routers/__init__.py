@@ -8,6 +8,7 @@ from . import (
     fraud_scoring,
     enforcement,
     graph_analytics,
+    datasets,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "fraud_scoring",
     "enforcement",
     "graph_analytics",
+    "datasets",
 ]

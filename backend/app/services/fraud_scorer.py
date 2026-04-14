@@ -58,6 +58,16 @@ class FraudScorer:
     def __init__(self):
         self._ml_score_url = f"{settings.ML_SERVICE_URL.rstrip('/')}/api/v1/ml/score"
         self._ml_health_url = f"{settings.ML_SERVICE_URL.rstrip('/')}/api/v1/ml/health"
+        self._ml_client = httpx.AsyncClient(
+            timeout=settings.SCORER_ML_TIMEOUT_SECONDS,
+            limits=httpx.Limits(
+                max_connections=settings.SCORER_ML_MAX_CONNECTIONS,
+                max_keepalive_connections=settings.SCORER_ML_MAX_KEEPALIVE,
+            ),
+        )
+
+    async def close(self) -> None:
+        await self._ml_client.aclose()
 
     @staticmethod
     def _base_graph_features(txn: dict) -> dict:
@@ -226,6 +236,7 @@ class FraudScorer:
             "xgboost_risk_score": ml_score,
             "shap_top3": list(ml_result.get("shap_top3") or shap_contributions[:3]),
             "model_version": str(ml_result.get("model_version", "ml-service-unknown")),
+            "scoring_mode": str(ml_result.get("scoring_mode", "full_ml")),
             "scoring_timestamp": str(
                 ml_result.get(
                     "timestamp",
@@ -247,6 +258,7 @@ class FraudScorer:
             "xgboost_risk_score": risk_score,
             "shap_top3": shap_contributions[:3],
             "model_version": "unigraph-demo-v1.0",
+            "scoring_mode": "backend_rule_fallback",
             "scoring_timestamp": datetime.now(timezone.utc).isoformat().replace(
                 "+00:00", "Z"
             ),
@@ -336,10 +348,9 @@ class FraudScorer:
             payload["graph_subgraph"] = graph_subgraph
 
         try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                response = await client.post(self._ml_score_url, json=payload)
-                response.raise_for_status()
-                return response.json()
+            response = await self._ml_client.post(self._ml_score_url, json=payload)
+            response.raise_for_status()
+            return response.json()
         except Exception as exc:
             logger.warning(
                 "ml_service_unavailable_fallback_to_rules",
@@ -358,17 +369,16 @@ class FraudScorer:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                response = await client.get(self._ml_health_url)
-                response.raise_for_status()
-                payload = response.json()
-                readiness.update(
-                    {
-                        "ml_service_reachable": payload.get("status") == "healthy",
-                        "ml_model_version": payload.get("model_version"),
-                        "ml_health": payload,
-                    }
-                )
+            response = await self._ml_client.get(self._ml_health_url, timeout=2.0)
+            response.raise_for_status()
+            payload = response.json()
+            readiness.update(
+                {
+                    "ml_service_reachable": payload.get("status") == "healthy",
+                    "ml_model_version": payload.get("model_version"),
+                    "ml_health": payload,
+                }
+            )
         except Exception as exc:
             readiness["ml_error"] = str(exc)
 
@@ -385,20 +395,35 @@ class FraudScorer:
         shap_contributions = list(rule_eval.shap_contributions)
 
         rule_based_score = min(round(risk_score), 100)
-        graph_features, graph_subgraph = await asyncio.gather(
-            self._build_graph_features(txn),
-            self._build_graph_subgraph(txn),
-        )
+
+        if settings.HIGH_THROUGHPUT_MODE:
+            if settings.HIGH_THROUGHPUT_SKIP_GRAPH_FEATURES:
+                graph_features = self._base_graph_features(txn)
+            else:
+                graph_features = await self._build_graph_features(txn)
+            graph_subgraph = None
+        else:
+            if settings.SCORER_ENABLE_GRAPH_SUBGRAPH:
+                graph_features, graph_subgraph = await asyncio.gather(
+                    self._build_graph_features(txn),
+                    self._build_graph_subgraph(txn),
+                )
+            else:
+                graph_features = await self._build_graph_features(txn)
+                graph_subgraph = None
 
         txn_for_ml = dict(txn)
         txn_for_ml.update(graph_features)
 
-        ml_result = await self._score_with_ml_service(
-            txn_for_ml,
-            rule_violations,
-            graph_features=graph_features,
-            graph_subgraph=graph_subgraph,
-        )
+        if settings.HIGH_THROUGHPUT_MODE and settings.HIGH_THROUGHPUT_RULE_ONLY:
+            ml_result = None
+        else:
+            ml_result = await self._score_with_ml_service(
+                txn_for_ml,
+                rule_violations,
+                graph_features=graph_features,
+                graph_subgraph=graph_subgraph,
+            )
         if ml_result:
             blended = self._blend_ml_with_rules(
                 ml_result=ml_result,
@@ -412,6 +437,7 @@ class FraudScorer:
             xgboost_risk_score = blended["xgboost_risk_score"]
             shap_top3 = blended["shap_top3"]
             model_version = blended["model_version"]
+            scoring_mode = blended["scoring_mode"]
             scoring_timestamp = blended["scoring_timestamp"]
             logger.info(
                 "ml_service_score_applied",
@@ -433,6 +459,7 @@ class FraudScorer:
             xgboost_risk_score = fallback["xgboost_risk_score"]
             shap_top3 = fallback["shap_top3"]
             model_version = fallback["model_version"]
+            scoring_mode = fallback["scoring_mode"]
             scoring_timestamp = fallback["scoring_timestamp"]
 
         risk_level, recommendation = self._risk_level_and_recommendation(risk_score)
@@ -451,6 +478,7 @@ class FraudScorer:
             "if_anomaly_score": if_anomaly_score,
             "xgboost_risk_score": xgboost_risk_score,
             "model_version": model_version,
+            "scoring_mode": scoring_mode,
             "scoring_timestamp": scoring_timestamp,
             "graph_features": graph_features,
         }

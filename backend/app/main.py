@@ -19,6 +19,7 @@ from .routers import (
     fraud_scoring,
     enforcement,
     graph_analytics,
+    datasets,
 )
 
 logger = structlog.get_logger()
@@ -71,7 +72,7 @@ async def lifespan(app: FastAPI):
         await neo4j_service.initialize_schema()
         logger.info("neo4j_ready")
 
-        if settings.ENABLE_GDS_SCHEDULER:
+        if settings.ENABLE_GDS_SCHEDULER and not settings.HIGH_THROUGHPUT_MODE:
             if settings.GDS_RUN_ON_STARTUP:
                 await _run_gds_once("startup")
             gds_scheduler_task = asyncio.create_task(_gds_scheduler_loop())
@@ -79,6 +80,8 @@ async def lifespan(app: FastAPI):
                 "gds_scheduler_started",
                 refresh_seconds=max(60, int(settings.GDS_REFRESH_SECONDS)),
             )
+        elif settings.HIGH_THROUGHPUT_MODE:
+            logger.info("gds_scheduler_skipped_high_throughput")
     except Exception as e:
         logger.error("neo4j_connection_failed", error=str(e))
         logger.warning("running_without_neo4j_demo_will_use_fallback")
@@ -107,6 +110,7 @@ async def lifespan(app: FastAPI):
             pass
 
     await neo4j_service.close()
+    await fraud_scorer.close()
     await timeline_service.close()
     logger.info("unigraph_shutdown")
 
@@ -166,6 +170,7 @@ app.include_router(
     prefix="/api/v1/graph-analytics",
     tags=["graph-analytics"],
 )
+app.include_router(datasets.router, prefix="/api/v1/datasets", tags=["datasets"])
 
 
 @app.get("/health")

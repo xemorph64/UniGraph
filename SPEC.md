@@ -174,7 +174,7 @@ interface WebSocketAlert {
 
 #### Task A.1: Audit Current Transaction Dataset
 - **Test**: Run `scripts/ingest_sql_transactions.py` and verify counts
-- **Impl**: Identify missing or malformed transactions in `transactions_inserts.sql` or `tmp_replay_transactions.sql`
+- **Impl**: Identify missing or malformed transactions in `transactions_inserts.sql` or `dataset_100_interconnected_txns.sql`
 - **Acceptance**: At least 10 transactions with risk_score >= 60 (alert-generating)
 
 #### Task A.2: Add Fraud Pattern Transactions

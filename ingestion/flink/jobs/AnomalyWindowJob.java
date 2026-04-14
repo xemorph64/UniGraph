@@ -157,6 +157,9 @@ public class AnomalyWindowJob {
                 accountId = textOrEmpty(eventNode, "account_id");
             }
             if (accountId.isEmpty()) {
+                accountId = textOrEmpty(eventNode, "sender_account");
+            }
+            if (accountId.isEmpty()) {
                 return null;
             }
 
@@ -171,6 +174,9 @@ public class AnomalyWindowJob {
             String timestampText = textOrEmpty(eventNode, "timestamp");
             if (timestampText.isEmpty()) {
                 timestampText = textOrEmpty(eventNode, "event_ts");
+            }
+            if (timestampText.isEmpty()) {
+                timestampText = textOrEmpty(eventNode, "txn_timestamp");
             }
 
             String txnId = textOrEmpty(eventNode, "txn_id");

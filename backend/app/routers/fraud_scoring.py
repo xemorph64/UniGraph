@@ -41,6 +41,7 @@ class FraudScoreResponse(BaseModel):
     shapTopContributors: list[str]
     alertId: Optional[str]
     modelVersion: str
+    scoringMode: str
 
 
 @router.post("/score", response_model=FraudScoreResponse)
@@ -89,6 +90,7 @@ async def score_fraud(
         if score_result["risk_score"] >= 60
         else None,
         modelVersion=score_result["model_version"],
+        scoringMode=score_result.get("scoring_mode", "unknown"),
     )
 
     return response

@@ -5,7 +5,9 @@ import json
 import signal
 import sys
 import time
+import threading
 from collections import defaultdict
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -41,6 +43,13 @@ class PipelineBridge:
         signal_ttl_seconds: int,
         poll_timeout: float,
         max_messages: int,
+        ingest_workers: int,
+        max_inflight: int,
+        ingest_batch_size: int,
+        ingest_batch_wait_ms: int,
+        enable_rule_reingest: bool,
+        reingest_cooldown_seconds: float,
+        http_timeout_seconds: float,
         log_level: str,
     ):
         self.bootstrap_servers = bootstrap_servers
@@ -54,16 +63,38 @@ class PipelineBridge:
         self.signal_ttl_seconds = signal_ttl_seconds
         self.poll_timeout = poll_timeout
         self.max_messages = max_messages
+        self.ingest_workers = max(1, ingest_workers)
+        self.max_inflight = max(self.ingest_workers, max_inflight)
+        self.ingest_batch_size = max(1, ingest_batch_size)
+        self.ingest_batch_wait_seconds = max(0.0, ingest_batch_wait_ms / 1000.0)
+        self.enable_rule_reingest = enable_rule_reingest
+        self.reingest_cooldown_seconds = max(0.0, reingest_cooldown_seconds)
+        self.http_timeout_seconds = max(1.0, http_timeout_seconds)
         self.log_level = log_level.upper()
 
         self.running = True
         self.consumer: Consumer | None = None
-        self.http = httpx.Client(timeout=20.0)
+        self.http = httpx.Client(
+            timeout=self.http_timeout_seconds,
+            limits=httpx.Limits(
+                max_connections=max(200, self.ingest_workers * 8),
+                max_keepalive_connections=max(100, self.ingest_workers * 4),
+            ),
+        )
+        self.executor = ThreadPoolExecutor(
+            max_workers=self.ingest_workers,
+            thread_name_prefix="bridge-ingest",
+        )
+        self.inflight_ingest: set[Future] = set()
 
         self.rule_signals: dict[str, RuleSignal] = {}
         self.device_accounts: dict[str, set[str]] = defaultdict(set)
         self.txn_cache: dict[str, dict[str, Any]] = {}
         self.latest_txn_by_account: dict[str, str] = {}
+        self.rule_reingest_last_sent: dict[str, float] = {}
+        self.pending_batch: list[dict[str, Any]] = []
+        self.pending_batch_since: float = 0.0
+        self._stats_lock = threading.Lock()
 
         self.stats: dict[str, int] = {
             "messages_total": 0,
@@ -159,8 +190,174 @@ class PipelineBridge:
             return RuleSignal()
         return signal_obj
 
+    def _inc_stat(self, key: str, delta: int = 1) -> None:
+        with self._stats_lock:
+            self.stats[key] = self.stats.get(key, 0) + delta
+
+    def _process_completed_futures(self, block: bool = False) -> None:
+        if not self.inflight_ingest:
+            return
+
+        if block:
+            done, _ = wait(
+                self.inflight_ingest,
+                timeout=0.5,
+                return_when=FIRST_COMPLETED,
+            )
+        else:
+            done = {future for future in self.inflight_ingest if future.done()}
+
+        if not done:
+            return
+
+        for future in done:
+            self.inflight_ingest.discard(future)
+            try:
+                outcome = future.result()
+            except Exception as ex:
+                self._inc_stat("errors")
+                self._log(f"Worker execution failed: {ex}", "WARN")
+                continue
+
+            if not outcome.get("ok"):
+                error_delta = int(outcome.get("requested", 1)) if outcome.get("batch") else 1
+                self._inc_stat("errors", error_delta)
+                self._log(
+                    f"Ingest failed txn={outcome.get('txn_id')} reason={outcome.get('reason')}: {outcome.get('error')}",
+                    "WARN",
+                )
+                continue
+
+            if outcome.get("batch"):
+                ingested = int(outcome.get("ingested", 0))
+                alerts_created = int(outcome.get("alerts_created", 0))
+                self._inc_stat("ingested", ingested)
+                if alerts_created > 0:
+                    self._inc_stat("alerts", alerts_created)
+                self._log(
+                    f"BATCH INGEST reason={outcome.get('reason')} ingested={ingested}/{outcome.get('requested')} alerts={alerts_created}",
+                    "DEBUG",
+                )
+                continue
+
+            ingest_response = outcome.get("response") or {}
+            txn_id = outcome.get("txn_id")
+            account_id = outcome.get("account_id")
+            self._inc_stat("ingested")
+
+            if ingest_response.get("alert_id"):
+                self._inc_stat("alerts")
+                self._log(
+                    f"ALERT txn={txn_id} account={account_id} risk={ingest_response.get('risk_score')} alert_id={ingest_response.get('alert_id')}",
+                    "DEBUG",
+                )
+            else:
+                self._log(
+                    f"INGEST txn={txn_id} account={account_id} risk={ingest_response.get('risk_score')}",
+                    "DEBUG",
+                )
+
+            if outcome.get("llm_generated"):
+                self._inc_stat("llm_generated")
+
+    def _ingest_worker(self, payload: dict[str, Any], reason: str) -> dict[str, Any]:
+        txn_id = str(payload.get("txn_id") or "")
+        account_id = str(payload.get("from_account") or "")
+        try:
+            ingest_response = self._post_ingest(payload)
+            llm_generated = False
+            if ingest_response:
+                if self.trigger_llm and ingest_response.get("alert_id"):
+                    self._trigger_llm_if_needed(ingest_response)
+                    llm_generated = True
+            return {
+                "ok": True,
+                "reason": reason,
+                "txn_id": txn_id,
+                "account_id": account_id,
+                "response": ingest_response,
+                "llm_generated": llm_generated,
+            }
+        except Exception as ex:
+            return {
+                "ok": False,
+                "reason": reason,
+                "txn_id": txn_id,
+                "account_id": account_id,
+                "error": str(ex),
+            }
+
+    def _ingest_batch_worker(self, payloads: list[dict[str, Any]], reason: str) -> dict[str, Any]:
+        requested = len(payloads)
+        try:
+            ingest_response = self._post_ingest_batch(payloads)
+            ingested = int(ingest_response.get("ingested") or requested)
+            alerts_created = int(ingest_response.get("alerts_created") or 0)
+            return {
+                "ok": True,
+                "batch": True,
+                "reason": reason,
+                "requested": requested,
+                "ingested": ingested,
+                "alerts_created": alerts_created,
+            }
+        except Exception as ex:
+            return {
+                "ok": False,
+                "batch": True,
+                "reason": reason,
+                "requested": requested,
+                "error": str(ex),
+            }
+
+    def _submit_pending_batch(self, reason: str) -> None:
+        if not self.pending_batch:
+            return
+
+        while len(self.inflight_ingest) >= self.max_inflight:
+            self._process_completed_futures(block=True)
+
+        payloads = [dict(payload) for payload in self.pending_batch]
+        self.pending_batch.clear()
+        self.pending_batch_since = 0.0
+
+        future = self.executor.submit(self._ingest_batch_worker, payloads, reason)
+        self.inflight_ingest.add(future)
+
+    def _maybe_flush_pending_batch_by_time(self) -> None:
+        if self.ingest_batch_size <= 1:
+            return
+        if not self.pending_batch:
+            return
+        if self.ingest_batch_wait_seconds <= 0:
+            return
+        if self.pending_batch_since <= 0:
+            return
+        if (time.time() - self.pending_batch_since) >= self.ingest_batch_wait_seconds:
+            self._submit_pending_batch(reason="time-flush")
+
+    def _enqueue_ingest(self, payload: dict[str, Any], reason: str) -> None:
+        if self.ingest_batch_size > 1:
+            self.pending_batch.append(dict(payload))
+            if self.pending_batch_since <= 0:
+                self.pending_batch_since = time.time()
+            if len(self.pending_batch) >= self.ingest_batch_size:
+                self._submit_pending_batch(reason=f"{reason}-batch")
+            return
+
+        while len(self.inflight_ingest) >= self.max_inflight:
+            self._process_completed_futures(block=True)
+
+        future = self.executor.submit(self._ingest_worker, dict(payload), reason)
+        self.inflight_ingest.add(future)
+
     def _build_ingest_payload(self, event: dict[str, Any]) -> dict[str, Any] | None:
-        from_account = str(event.get("from_account") or event.get("account_id") or "").strip()
+        from_account = str(
+            event.get("from_account")
+            or event.get("account_id")
+            or event.get("sender_account")
+            or ""
+        ).strip()
         to_account = str(event.get("to_account") or "UBI30100000000000").strip()
         txn_id = str(event.get("txn_id") or "").strip()
 
@@ -229,6 +426,13 @@ class PipelineBridge:
         data = resp.json()
         return data if isinstance(data, dict) else None
 
+    def _post_ingest_batch(self, payloads: list[dict[str, Any]]) -> dict[str, Any]:
+        url = f"{self.backend_url}/transactions/ingest/batch"
+        resp = self.http.post(url, json={"items": payloads})
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
     def _trigger_llm_if_needed(self, ingest_response: dict[str, Any]) -> None:
         if not self.trigger_llm:
             return
@@ -241,10 +445,9 @@ class PipelineBridge:
         payload = {"alert_id": alert_id, "case_notes": self.llm_case_notes}
         resp = self.http.post(url, json=payload)
         resp.raise_for_status()
-        self.stats["llm_generated"] += 1
 
     def _handle_enriched_message(self, message_data: dict[str, Any]) -> None:
-        self.stats["enriched_seen"] += 1
+        self._inc_stat("enriched_seen")
 
         raw_event = self._extract_raw_event(message_data)
         if not raw_event:
@@ -259,31 +462,14 @@ class PipelineBridge:
         self.txn_cache[payload["txn_id"]] = payload
         self.latest_txn_by_account[payload["from_account"]] = payload["txn_id"]
 
-        ingest_response = self._post_ingest(payload)
-        if not ingest_response:
-            return
-
-        self.stats["ingested"] += 1
-        if ingest_response.get("alert_id"):
-            self.stats["alerts"] += 1
-
-        self._trigger_llm_if_needed(ingest_response)
-
-        if ingest_response.get("alert_id"):
-            self._log(
-                f"ALERT txn={payload['txn_id']} account={payload['from_account']} "
-                f"risk={ingest_response.get('risk_score')} alert_id={ingest_response.get('alert_id')}"
-            )
-        else:
-            self._log(
-                f"INGEST txn={payload['txn_id']} account={payload['from_account']} "
-                f"risk={ingest_response.get('risk_score')}",
-                "DEBUG",
-            )
+        self._enqueue_ingest(payload, reason="enriched")
 
     def _handle_rule_message(self, message_data: dict[str, Any]) -> None:
-        self.stats["rule_seen"] += 1
+        self._inc_stat("rule_seen")
         self._upsert_rule_signal(message_data)
+
+        if not self.enable_rule_reingest:
+            return
 
         account_id = str(message_data.get("account_id") or "").strip()
         txn_id = str(message_data.get("txn_id") or "").strip()
@@ -293,20 +479,17 @@ class PipelineBridge:
 
         # If we already observed the txn in enriched flow, re-score with latest rule signal.
         if txn_id and txn_id in self.txn_cache:
+            if self.reingest_cooldown_seconds > 0:
+                last_sent = self.rule_reingest_last_sent.get(txn_id, 0.0)
+                if (time.time() - last_sent) < self.reingest_cooldown_seconds:
+                    return
+
             payload = dict(self.txn_cache[txn_id])
             signal_obj = self._active_signal_for(account_id)
             payload["velocity_1h"] = max(payload.get("velocity_1h", 0), signal_obj.txn_count)
             payload["velocity_24h"] = max(payload.get("velocity_24h", 0), signal_obj.txn_count * 2)
-            try:
-                ingest_response = self._post_ingest(payload)
-                if ingest_response:
-                    self.stats["ingested"] += 1
-                    if ingest_response.get("alert_id"):
-                        self.stats["alerts"] += 1
-                        self._trigger_llm_if_needed(ingest_response)
-            except Exception as ex:
-                self.stats["errors"] += 1
-                self._log(f"Failed rule-driven reingest txn={txn_id}: {ex}", "WARN")
+            self.rule_reingest_last_sent[txn_id] = time.time()
+            self._enqueue_ingest(payload, reason="rule")
 
     def run(self) -> int:
         self._install_signal_handlers()
@@ -315,11 +498,21 @@ class PipelineBridge:
 
         self._log(
             f"Subscribed to topics={self.enriched_topic},{self.rule_topic} "
-            f"bootstrap={self.bootstrap_servers} backend={self.backend_url} trigger_llm={self.trigger_llm}"
+            f"bootstrap={self.bootstrap_servers} backend={self.backend_url} trigger_llm={self.trigger_llm} "
+            f"workers={self.ingest_workers} max_inflight={self.max_inflight} "
+            f"batch_size={self.ingest_batch_size} batch_wait_ms={int(self.ingest_batch_wait_seconds * 1000)} "
+            f"rule_reingest={self.enable_rule_reingest}"
         )
+        if self.trigger_llm and self.ingest_batch_size > 1:
+            self._log(
+                "LLM report generation is disabled in batch mode because batch ingest does not return alert IDs.",
+                "WARN",
+            )
 
         try:
             while self.running:
+                self._process_completed_futures(block=False)
+                self._maybe_flush_pending_batch_by_time()
                 msg = self.consumer.poll(self.poll_timeout)
                 if msg is None:
                     continue
@@ -327,11 +520,11 @@ class PipelineBridge:
                 if msg.error():
                     if msg.error().code() == KafkaError._PARTITION_EOF:
                         continue
-                    self.stats["errors"] += 1
+                    self._inc_stat("errors")
                     self._log(f"Kafka error: {msg.error()}", "WARN")
                     continue
 
-                self.stats["messages_total"] += 1
+                self._inc_stat("messages_total")
                 data = self._parse_json(msg.value())
                 if not data:
                     continue
@@ -343,7 +536,7 @@ class PipelineBridge:
                     elif topic == self.rule_topic:
                         self._handle_rule_message(data)
                 except Exception as ex:
-                    self.stats["errors"] += 1
+                    self._inc_stat("errors")
                     self._log(f"Processing error topic={topic}: {ex}", "WARN")
 
                 if self.max_messages > 0 and self.stats["messages_total"] >= self.max_messages:
@@ -353,6 +546,14 @@ class PipelineBridge:
         finally:
             if self.consumer is not None:
                 self.consumer.close()
+
+            if self.pending_batch:
+                self._submit_pending_batch(reason="shutdown-flush")
+
+            while self.inflight_ingest:
+                self._process_completed_futures(block=True)
+
+            self.executor.shutdown(wait=True)
             self.http.close()
             self._log(f"Summary: {json.dumps(self.stats)}")
 
@@ -372,6 +573,13 @@ def main() -> None:
     parser.add_argument("--signal-ttl-seconds", type=int, default=240)
     parser.add_argument("--poll-timeout", type=float, default=1.0)
     parser.add_argument("--max-messages", type=int, default=0)
+    parser.add_argument("--ingest-workers", type=int, default=64)
+    parser.add_argument("--max-inflight", type=int, default=4000)
+    parser.add_argument("--ingest-batch-size", type=int, default=1)
+    parser.add_argument("--ingest-batch-wait-ms", type=int, default=25)
+    parser.add_argument("--disable-rule-reingest", action="store_true")
+    parser.add_argument("--reingest-cooldown-seconds", type=float, default=5.0)
+    parser.add_argument("--http-timeout-seconds", type=float, default=10.0)
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARN", "ERROR"])
     args = parser.parse_args()
 
@@ -387,6 +595,13 @@ def main() -> None:
         signal_ttl_seconds=args.signal_ttl_seconds,
         poll_timeout=args.poll_timeout,
         max_messages=args.max_messages,
+        ingest_workers=args.ingest_workers,
+        max_inflight=args.max_inflight,
+        ingest_batch_size=args.ingest_batch_size,
+        ingest_batch_wait_ms=args.ingest_batch_wait_ms,
+        enable_rule_reingest=not args.disable_rule_reingest,
+        reingest_cooldown_seconds=args.reingest_cooldown_seconds,
+        http_timeout_seconds=args.http_timeout_seconds,
         log_level=args.log_level,
     )
     raise SystemExit(bridge.run())

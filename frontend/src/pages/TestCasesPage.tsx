@@ -6,7 +6,9 @@ import {
   getBackendHealth,
   listAlerts,
   listTransactions,
+  streamDataset,
   type BackendAlert,
+  type DatasetKey,
 } from "@/lib/unigraph-api";
 
 function formatWhen(value?: string): string {
@@ -28,6 +30,16 @@ export default function TestCasesPage() {
   const [backendStatus, setBackendStatus] = useState("unknown");
   const [transactionCount, setTransactionCount] = useState(0);
   const [alerts, setAlerts] = useState<BackendAlert[]>([]);
+  const [switchingDataset, setSwitchingDataset] = useState<DatasetKey | null>(null);
+  const [switchSuccessMessage, setSwitchSuccessMessage] = useState<string | null>(null);
+  const [switchErrorMessage, setSwitchErrorMessage] = useState<string | null>(null);
+
+  const datasetSourceLabel = useMemo(() => {
+    if (transactionCount === 100) return "dataset_100_interconnected_txns.sql";
+    if (transactionCount === 200) return "dataset_200_interconnected_txns.sql";
+    if (transactionCount === 0) return "No dataset loaded";
+    return "Unknown/Custom dataset";
+  }, [transactionCount]);
 
   const loadData = useCallback(async () => {
     try {
@@ -48,6 +60,29 @@ export default function TestCasesPage() {
     }
   }, []);
 
+  const handleDatasetSwitch = useCallback(
+    async (dataset: DatasetKey) => {
+      setSwitchingDataset(dataset);
+      setSwitchErrorMessage(null);
+      setSwitchSuccessMessage(null);
+
+      try {
+        const response = await streamDataset(dataset);
+        setSwitchSuccessMessage(
+          `${response.message} (${response.totals.ingest_success} successful ingests).`,
+        );
+        await loadData();
+      } catch (err) {
+        setSwitchErrorMessage(
+          err instanceof Error ? err.message : "Failed to switch dataset",
+        );
+      } finally {
+        setSwitchingDataset(null);
+      }
+    },
+    [loadData],
+  );
+
   useEffect(() => {
     void loadData();
     const poller = setInterval(() => {
@@ -60,8 +95,8 @@ export default function TestCasesPage() {
     () => [
       {
         label: "Dataset Source",
-        value: "fraud_scenarios.sql",
-        sub: "Real-data mode only",
+        value: datasetSourceLabel,
+        sub: "Derived from live transaction count",
         icon: Database,
         tone: "text-info",
       },
@@ -87,7 +122,7 @@ export default function TestCasesPage() {
         tone: backendStatus === "healthy" ? "text-success" : "text-warning",
       },
     ],
-    [transactionCount, alerts.length, backendStatus],
+    [datasetSourceLabel, transactionCount, alerts.length, backendStatus],
   );
 
   return (
@@ -95,9 +130,13 @@ export default function TestCasesPage() {
       <div>
         <h1 className="text-xl font-bold text-primary">Pipeline Status (Real Data Only)</h1>
         <p className="text-xs text-muted-foreground mt-1">
-          This page shows live backend outputs sourced from fraud_scenarios ingestion.
+          This page shows live backend outputs sourced from selected dataset ingestion.
         </p>
         {error && <p className="text-xs text-danger mt-1">{error}</p>}
+        {switchSuccessMessage && (
+          <p className="text-xs text-success mt-1">{switchSuccessMessage}</p>
+        )}
+        {switchErrorMessage && <p className="text-xs text-danger mt-1">{switchErrorMessage}</p>}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -118,6 +157,20 @@ export default function TestCasesPage() {
       <div className="bg-card border border-border rounded-[10px] p-4">
         <div className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">Actions</div>
         <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => void handleDatasetSwitch("100")}
+            disabled={Boolean(switchingDataset)}
+            className="text-xs px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {switchingDataset === "100" ? "Loading 100-row Dataset..." : "Load 100-row Dataset"}
+          </button>
+          <button
+            onClick={() => void handleDatasetSwitch("200")}
+            disabled={Boolean(switchingDataset)}
+            className="text-xs px-3 py-2 rounded-md border border-border bg-card text-foreground hover:bg-muted cursor-pointer disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {switchingDataset === "200" ? "Loading 200-row Dataset..." : "Load 200-row Dataset"}
+          </button>
           <button
             onClick={() => navigate("/alerts")}
             className="text-xs px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"

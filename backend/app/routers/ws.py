@@ -1,5 +1,6 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Dict
+import asyncio
 import json
 import structlog
 
@@ -20,15 +21,22 @@ class ConnectionManager:
 
     async def broadcast_alert(self, alert_data: dict):
         message = json.dumps({"type": "ALERT_FIRED", **alert_data})
+        if not self.active_connections:
+            return
+
+        connections = list(self.active_connections.items())
         disconnected: list[str] = []
-        for investigator_id, ws in self.active_connections.items():
-            try:
-                await ws.send_text(message)
-            except Exception as exc:
+        results = await asyncio.gather(
+            *(ws.send_text(message) for _, ws in connections),
+            return_exceptions=True,
+        )
+
+        for (investigator_id, _), result in zip(connections, results):
+            if isinstance(result, Exception):
                 logger.warning(
                     "ws_alert_send_failed",
                     investigator_id=investigator_id,
-                    error=str(exc),
+                    error=str(result),
                 )
                 disconnected.append(investigator_id)
 

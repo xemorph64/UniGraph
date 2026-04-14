@@ -33,6 +33,19 @@ class Settings(BaseSettings):
 
     ML_SERVICE_URL: str = "http://localhost:8002"
 
+    SCORER_ML_TIMEOUT_SECONDS: float = 1.5
+    SCORER_ML_MAX_CONNECTIONS: int = 400
+    SCORER_ML_MAX_KEEPALIVE: int = 200
+    SCORER_ENABLE_GRAPH_SUBGRAPH: bool = False
+
+    HIGH_THROUGHPUT_MODE: bool = False
+    HIGH_THROUGHPUT_RULE_ONLY: bool = False
+    HIGH_THROUGHPUT_SKIP_GRAPH_FEATURES: bool = True
+    HIGH_THROUGHPUT_ALERTS_ENABLED: bool = False
+
+    MAX_BATCH_INGEST_SIZE: int = 2000
+    BATCH_INGEST_SCORE_CONCURRENCY: int = 256
+
     ENABLE_GDS_SCHEDULER: bool = True
     GDS_RUN_ON_STARTUP: bool = True
     GDS_REFRESH_SECONDS: int = 300

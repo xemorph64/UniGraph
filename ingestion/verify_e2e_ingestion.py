@@ -5,6 +5,8 @@ import json
 import time
 import uuid
 from datetime import datetime, timezone
+from urllib.error import URLError
+from urllib.request import urlopen
 
 from confluent_kafka import Consumer, Producer
 
@@ -26,7 +28,32 @@ def _parse_enriched_latency_ms(payload: dict) -> float:
     return round((ingest_dt - source_dt).total_seconds() * 1000, 2)
 
 
+def _running_flink_jobs_count(jobmanager_url: str = "http://localhost:8082") -> int:
+    try:
+        with urlopen(f"{jobmanager_url}/jobs/overview", timeout=5) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except (URLError, TimeoutError, ValueError):
+        return -1
+
+    jobs = body.get("jobs")
+    if isinstance(jobs, list):
+        return len(jobs)
+    return 0
+
+
 def run(bootstrap: str, timeout_enriched: int, timeout_rule: int) -> dict:
+    running_jobs = _running_flink_jobs_count()
+    if running_jobs == 0:
+        return {
+            "status": "FAIL",
+            "error": "No running Flink jobs detected. Submit TransactionEnrichmentJob and AnomalyWindowJob before running E2E verification.",
+        }
+    if running_jobs < 0:
+        return {
+            "status": "FAIL",
+            "error": "Flink jobmanager is unreachable at http://localhost:8082.",
+        }
+
     eid = f"TXN-E2E-{int(time.time())}"
     account = "UBI30100099999999"
 

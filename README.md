@@ -51,7 +51,7 @@ An end-to-end, graph-native fund flow tracking platform designed as a pluggable 
 
 ## Getting Started
 
-See the implementation plan for detailed setup instructions.
+Use the runtime docs below for setup and operations.
 
 ```bash
 # Clone
@@ -84,10 +84,56 @@ docker compose -f docker/docker-compose.yml up -d ml-service
 
 If `ML_SERVING_REQUIREMENTS` is not set, the default GPU profile is used.
 
+## High Throughput Profile
+
+For aggressive ingest targets (for example, approaching 1000 transactions/sec), use the throughput profile below.
+
+1. Backend scoring profile (in `.env`):
+
+```bash
+HIGH_THROUGHPUT_MODE=true
+HIGH_THROUGHPUT_RULE_ONLY=true
+HIGH_THROUGHPUT_SKIP_GRAPH_FEATURES=true
+SCORER_ENABLE_GRAPH_SUBGRAPH=false
+SCORER_ML_TIMEOUT_SECONDS=1.5
+```
+
+2. Start backend with multiple workers (example):
+
+```bash
+cd backend
+PYTHONPATH=.. uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+3. Start the stream bridge with high concurrency:
+
+```bash
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python ingestion/neo4j_writer.py \
+	--bootstrap-servers localhost:19092 \
+	--backend-url http://localhost:8000/api/v1 \
+	--ingest-workers 128 \
+	--max-inflight 8000 \
+	--ingest-batch-size 200 \
+	--ingest-batch-wait-ms 20 \
+	--disable-rule-reingest \
+	--http-timeout-seconds 8
+```
+
+4. Benchmark stream throughput and backend ingest throughput:
+
+```bash
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python ingestion/benchmark_ingestion.py --bootstrap localhost:19092 --count 10000 --timeout 240 --profile optimized
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python scripts/benchmark_backend_ingest.py --url http://localhost:8000/api/v1/transactions/ingest --count 10000 --concurrency 256 --timeout 8
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python scripts/benchmark_backend_ingest.py --url http://localhost:8000/api/v1/transactions/ingest/batch --count 20000 --batch-size 200 --concurrency 32 --timeout 8
+```
+
+The batch endpoint (`/api/v1/transactions/ingest/batch`) is intended for high-throughput ingestion paths and can significantly outperform single-request ingest under load.
+
 ## Documentation
 
-- **Implementation Plan**: `UniGRAPH_3_Person_Implementation_Plan.md` — Master guide for all 3 developers
+- **End-to-End Runtime Flow**: `END_TO_END_PIPELINE_MAP.md` — File-to-file system flow from ingestion to frontend
 - **Research & Architecture**: `UniGRAPH_Research_and_Planning.md` — Full blueprint with compliance, Finacle integration, risk register
+- **SQL Dataset Structure**: `UniGRAPH_SQL_Transaction_Dataset_Structure.md` — Transaction schema and field semantics
 - **Smoke Validation**: `scripts/SMOKE_VALIDATION.md` — Live provider checks and infra stack readiness checks
 - **Live Demo Runner**: `scripts/run_live_demo.py` — Deterministic ingest -> alert -> investigate -> STR generate/submit validation
 

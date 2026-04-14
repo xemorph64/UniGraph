@@ -42,9 +42,10 @@ export default function TransactionMonitor() {
 
   useEffect(() => {
     loadTransactions();
-    const poller = setInterval(loadTransactions, 15000);
+    const pollIntervalMs = wsConnected ? 30000 : 15000;
+    const poller = setInterval(loadTransactions, pollIntervalMs);
     return () => clearInterval(poller);
-  }, [loadTransactions]);
+  }, [loadTransactions, wsConnected]);
 
   useEffect(() => {
     const disconnect = connectAlertsWebSocket(
