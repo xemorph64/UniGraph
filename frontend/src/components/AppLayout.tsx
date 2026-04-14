@@ -51,6 +51,7 @@ function toHeaderNotification(alert: BackendAlert): HeaderNotification {
 function AppContent() {
   const location = useLocation();
   const navigate = useNavigate();
+  const currentYear = new Date().getFullYear();
 
   const pageName = breadcrumbMap[location.pathname] || "Dashboard";
   const [notifOpen, setNotifOpen] = useState(false);
@@ -208,10 +209,19 @@ function AppContent() {
       </main>
 
       {/* Footer */}
-      <footer className="h-10 border-t bg-card flex items-center justify-center shrink-0">
-        <span className="text-[14px] text-muted-foreground">
-           UniGRAPH © 2026 · Unified Banking Intelligence · Powered by FinGraph AI · Built for IDEA 2.0 Hackathon
-        </span>
+      <footer className="border-t bg-card/95 shrink-0">
+        <div className="h-14 px-6 flex items-center justify-between gap-4">
+          <div className="text-[12px] md:text-[13px] text-muted-foreground">
+            <span className="font-semibold text-foreground">UniGRAPH</span>
+            <span className="mx-2 text-border">|</span>
+            <span>Copyright {currentYear} UniGRAPH. All rights reserved.</span>
+          </div>
+          <div className="hidden md:flex items-center gap-3 text-[12px] text-muted-foreground">
+            <span>Financial Intelligence Platform</span>
+            <span className="h-1 w-1 rounded-full bg-border" />
+            <span>Compliance & Investigation Suite</span>
+          </div>
+        </div>
       </footer>
     </div>
   );
