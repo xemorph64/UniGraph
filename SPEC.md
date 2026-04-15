@@ -173,8 +173,8 @@ interface WebSocketAlert {
 ### Phase A: Finalize Transaction Dataset
 
 #### Task A.1: Audit Current Transaction Dataset
-- **Test**: Run `scripts/ingest_sql_transactions.py` and verify counts
-- **Impl**: Identify missing or malformed transactions in `transactions_inserts.sql` or `dataset_100_interconnected_txns.sql`
+- **Test**: Run `scripts/ingest_transactions_input_sql.py --dataset 100` and `scripts/ingest_transactions_input_sql.py --dataset 200`, then verify counts
+- **Impl**: Identify missing or malformed transactions in `dataset_100_interconnected_txns.sql` and `dataset_200_interconnected_txns.sql`
 - **Acceptance**: At least 10 transactions with risk_score >= 60 (alert-generating)
 
 #### Task A.2: Add Fraud Pattern Transactions
@@ -184,7 +184,7 @@ interface WebSocketAlert {
   - DORMANT_AWAKENING: `is_dormant = true` + high amount
   - MULE_NETWORK: `device_account_count > 3`
   - ROUND_TRIPPING: `from_account == to_account`
-- **Impl**: Insert into `transactions_inserts.sql` with correct values
+- **Impl**: Insert into `dataset_100_interconnected_txns.sql` or `dataset_200_interconnected_txns.sql` with correct values
 - **Acceptance**: Each typology triggers corresponding `rule_violation`
 
 #### Task A.3: Verify Dataset INGEST -> NEO4J Flow

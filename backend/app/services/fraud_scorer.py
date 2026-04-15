@@ -54,6 +54,10 @@ TYPOLOGY_PRIORITY = [
 ]
 
 
+class MLScoringRequiredError(RuntimeError):
+    pass
+
+
 class FraudScorer:
     def __init__(self):
         self._ml_score_url = f"{settings.ML_SERVICE_URL.rstrip('/')}/api/v1/ml/score"
@@ -424,6 +428,12 @@ class FraudScorer:
                 graph_features=graph_features,
                 graph_subgraph=graph_subgraph,
             )
+
+        if settings.SCORER_REQUIRE_ML and ml_result is None:
+            raise MLScoringRequiredError(
+                "ML scoring is required in current runtime profile but ML service result is unavailable"
+            )
+
         if ml_result:
             blended = self._blend_ml_with_rules(
                 ml_result=ml_result,

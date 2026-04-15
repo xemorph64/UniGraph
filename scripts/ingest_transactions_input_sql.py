@@ -21,10 +21,15 @@ from typing import Any
 import httpx
 
 
-DEFAULT_SQL_FILE = Path(__file__).resolve().parents[1] / "dataset_100_interconnected_txns.sql"
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DATASET_SQL_FILES = {
+    "100": ROOT_DIR / "dataset_100_interconnected_txns.sql",
+    "200": ROOT_DIR / "dataset_200_interconnected_txns.sql",
+}
+DEFAULT_SQL_FILE = DATASET_SQL_FILES["100"]
 DEFAULT_API_URL = "http://localhost:8000/api/v1/transactions/ingest"
 DEFAULT_REPORT_FILE = (
-    Path(__file__).resolve().parents[1] / "ingest_transactions_input_report.json"
+    ROOT_DIR / "ingest_transactions_input_report.json"
 )
 
 
@@ -837,6 +842,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Ingest transactions_input SQL rows via backend API"
     )
+    parser.add_argument(
+        "--dataset",
+        choices=sorted(DATASET_SQL_FILES.keys()),
+        help="Use canonical dataset alias instead of manual --sql-file path",
+    )
     parser.add_argument("--sql-file", type=Path, default=DEFAULT_SQL_FILE)
     parser.add_argument("--api-url", default=DEFAULT_API_URL)
     parser.add_argument("--report-file", type=Path, default=DEFAULT_REPORT_FILE)
@@ -846,6 +856,9 @@ def main() -> int:
     parser.add_argument("--ml-direct-verify", action="store_true")
     parser.add_argument("--ml-score-url", default="http://localhost:8002/api/v1/ml/score")
     args = parser.parse_args()
+
+    if args.dataset:
+        args.sql_file = DATASET_SQL_FILES[args.dataset]
 
     if not args.sql_file.exists():
         print(f"SQL file not found: {args.sql_file}")

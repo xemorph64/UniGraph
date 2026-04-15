@@ -25,6 +25,7 @@ xgb_model = None
 shap_explainer = None
 feature_engineer = None
 if_scaler = None
+active_model_dir = None
 
 fallback_ready = False
 fallback_version = "fallback-linear-v1"
@@ -35,6 +36,9 @@ feature_std = None
 
 # Runtime scorer currently builds 26 XGBoost features via prepare_features().
 RUNTIME_XGB_FEATURE_WIDTH = 26
+# Supported artifact widths retained for backward compatibility with
+# previously exported checkpoints.
+LEGACY_XGB_FEATURE_WIDTHS = {21, 39}
 
 
 def _to_bool_env(value: str) -> bool:
@@ -60,6 +64,25 @@ def _current_scoring_mode() -> str:
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _resolve_model_dir() -> str:
+    configured = str(os.getenv("MODEL_DIR", "/models") or "/models").strip() or "/models"
+    configured_path = Path(configured)
+
+    if configured_path.exists():
+        return str(configured_path)
+
+    local_default = _repo_root() / "ml" / "models_colab_import"
+    if local_default.exists():
+        print(
+            "MODEL_DIR not found; using local default model directory "
+            f"{local_default}"
+        )
+        return str(local_default)
+
+    # Keep configured path when no local fallback exists so existing error paths remain explicit.
+    return str(configured_path)
 
 
 def _channel_risk(channel: str) -> float:
@@ -474,18 +497,14 @@ def _sigmoid(arr: np.ndarray) -> np.ndarray:
 def _align_xgb_features(features: np.ndarray) -> np.ndarray:
     """Align feature width to trained XGBoost expectation.
 
-    Some legacy artifacts were trained with 39 features while newer runtime
+    Some legacy artifacts were trained with 21/39 features while newer runtime
     paths build a 26-feature vector. To preserve compatibility, we pad/truncate
     to the trained model width when available.
     """
-    if xgb_model is None or not hasattr(xgb_model, "model"):
-        return features
-
-    expected = getattr(xgb_model.model, "n_features_in_", None)
+    expected = _xgb_expected_width()
     if expected is None:
         return features
 
-    expected = int(expected)
     current = int(features.shape[1])
 
     if current == expected:
@@ -498,10 +517,7 @@ def _align_xgb_features(features: np.ndarray) -> np.ndarray:
 
 def _xgb_feature_width_mismatch(features: np.ndarray) -> tuple[bool, Optional[int], int]:
     """Return mismatch status between runtime features and trained XGBoost width."""
-    if xgb_model is None or not hasattr(xgb_model, "model"):
-        return False, None, int(features.shape[1])
-
-    expected = getattr(xgb_model.model, "n_features_in_", None)
+    expected = _xgb_expected_width()
     if expected is None:
         return False, None, int(features.shape[1])
 
@@ -510,14 +526,31 @@ def _xgb_feature_width_mismatch(features: np.ndarray) -> tuple[bool, Optional[in
     return runtime_width != expected_width, expected_width, runtime_width
 
 
+def _xgb_expected_width() -> Optional[int]:
+    if xgb_model is None:
+        return None
+
+    estimator = getattr(xgb_model, "model", xgb_model)
+    expected = getattr(estimator, "n_features_in_", None)
+    if expected is None:
+        return None
+
+    try:
+        width = int(expected)
+    except Exception:
+        return None
+
+    if width <= 0:
+        return None
+    return width
+
+
 def _xgb_model_width_compatible() -> bool:
-    """Check whether loaded XGBoost artifact width matches runtime feature builder."""
-    if xgb_model is None or not hasattr(xgb_model, "model"):
-        return True
-    expected = getattr(xgb_model.model, "n_features_in_", None)
+    """Check whether loaded XGBoost artifact width is runtime-compatible."""
+    expected = _xgb_expected_width()
     if expected is None:
         return True
-    return int(expected) == RUNTIME_XGB_FEATURE_WIDTH
+    return expected == RUNTIME_XGB_FEATURE_WIDTH or expected in LEGACY_XGB_FEATURE_WIDTHS
 
 
 def _align_if_features(features: np.ndarray) -> np.ndarray:
@@ -526,8 +559,10 @@ def _align_if_features(features: np.ndarray) -> np.ndarray:
 
     if if_scaler is not None and hasattr(if_scaler, "n_features_in_"):
         expected = int(getattr(if_scaler, "n_features_in_"))
-    elif if_model is not None and hasattr(if_model, "model"):
-        expected = int(getattr(if_model.model, "n_features_in_", features.shape[1]))
+    elif if_model is not None:
+        estimator = getattr(if_model, "model", if_model)
+        if hasattr(estimator, "n_features_in_"):
+            expected = int(getattr(estimator, "n_features_in_", features.shape[1]))
 
     if expected is None:
         return features
@@ -553,6 +588,153 @@ def _if_estimator() -> Optional[object]:
 def _if_anomaly_score_from_margin(decision_margin: float) -> float:
     """Map IF decision margin (>0 normal, <0 anomaly) to [0,1] anomaly score."""
     return float(np.clip(1.0 / (1.0 + np.exp(8.0 * decision_margin)), 0.0, 1.0))
+
+
+def _build_fallback_graphsage_class(torch_module):
+    """Create a lightweight GraphSAGE-compatible class for checkpoint loading."""
+
+    class _FallbackGraphSAGEFraudDetector(torch_module.nn.Module):
+        def __init__(
+            self,
+            in_features: int = 32,
+            hidden_dim: int = 128,
+            out_features: int = 64,
+        ):
+            super().__init__()
+            self.in_features = max(1, int(in_features))
+            self.hidden_dim = max(1, int(hidden_dim))
+            self.out_features = max(1, int(out_features))
+
+            self.lin1 = torch_module.nn.Linear(self.in_features * 2, self.hidden_dim)
+            self.lin2 = torch_module.nn.Linear(self.hidden_dim * 2, self.hidden_dim)
+            self.out = torch_module.nn.Linear(self.hidden_dim, 1)
+
+        def _normalize_width(self, x):
+            if x.dim() == 1:
+                x = x.unsqueeze(0)
+
+            width = int(x.size(1))
+            if width < self.in_features:
+                pad = torch_module.zeros(
+                    (x.size(0), self.in_features - width),
+                    dtype=x.dtype,
+                    device=x.device,
+                )
+                x = torch_module.cat([x, pad], dim=1)
+            elif width > self.in_features:
+                x = x[:, : self.in_features]
+            return x
+
+        def _aggregate_neighbors(self, x, edge_index):
+            if edge_index is None:
+                return x
+
+            if edge_index.dim() != 2 or edge_index.size(0) != 2:
+                return x
+
+            src = edge_index[0].long()
+            dst = edge_index[1].long()
+            if src.numel() == 0 or dst.numel() == 0:
+                return x
+
+            node_count = int(x.size(0))
+            src = src.clamp(0, max(0, node_count - 1))
+            dst = dst.clamp(0, max(0, node_count - 1))
+
+            agg = torch_module.zeros_like(x)
+            deg = torch_module.zeros((node_count, 1), dtype=x.dtype, device=x.device)
+            agg.index_add_(0, dst, x[src])
+            deg.index_add_(0, dst, torch_module.ones((dst.numel(), 1), dtype=x.dtype, device=x.device))
+            return agg / deg.clamp_min(1.0)
+
+        def predict_proba(self, x, edge_index=None, edge_attr=None):
+            x = self._normalize_width(x)
+
+            n1 = self._aggregate_neighbors(x, edge_index)
+            h1 = torch_module.relu(self.lin1(torch_module.cat([x, n1], dim=1)))
+
+            n2 = self._aggregate_neighbors(h1, edge_index)
+            h2 = torch_module.relu(self.lin2(torch_module.cat([h1, n2], dim=1)))
+
+            probs = torch_module.sigmoid(self.out(h2))
+            return probs.squeeze(-1)
+
+    return _FallbackGraphSAGEFraudDetector
+
+
+class _RawXGBClassifierAdapter:
+    """Adapter for raw xgboost/sklearn classifiers that expose predict_proba."""
+
+    def __init__(self, model: object):
+        self.model = model
+
+    def prepare_features(
+        self,
+        gnn_score: float,
+        if_score: float,
+        graph_features: dict,
+        txn_features: dict,
+        account_features: dict,
+        rule_violations: list[str],
+    ) -> np.ndarray:
+        rules = set(rule_violations or [])
+        feature_row = np.array(
+            [
+                float(gnn_score),
+                float(if_score),
+                float(graph_features.get("connected_suspicious_nodes", 0.0)),
+                float(graph_features.get("community_risk_score", 0.0)),
+                float(graph_features.get("community_id", 0.0)),
+                float(graph_features.get("pagerank", 0.0)),
+                float(graph_features.get("betweenness_centrality", 0.0)),
+                float(graph_features.get("in_degree_24h", 0.0)),
+                float(graph_features.get("out_degree_24h", 0.0)),
+                float(graph_features.get("shortest_path_to_fraud", 0.0)),
+                float(graph_features.get("neighbor_fraud_ratio", 0.0)),
+                float(txn_features.get("velocity_1h", 0.0)),
+                float(txn_features.get("velocity_24h", 0.0)),
+                float(txn_features.get("amount_zscore", 0.0)),
+                float(txn_features.get("channel_switch_count", 0.0)),
+                float(txn_features.get("geo_distance", 0.0)),
+                float(account_features.get("account_age_days", 0.0)),
+                float(account_features.get("kyc_tier", 1.0)),
+                float(account_features.get("transaction_count_30d", 0.0)),
+                float(account_features.get("avg_txn_amount_30d", 0.0)),
+                float(account_features.get("device_count_30d", 0.0)),
+                float(account_features.get("ip_count_30d", 0.0)),
+                float(len(rule_violations or [])),
+                1.0 if "RAPID_LAYERING" in rules else 0.0,
+                1.0 if "DORMANT_AWAKENING" in rules else 0.0,
+                1.0 if "MULE_NETWORK" in rules else 0.0,
+            ],
+            dtype=np.float64,
+        )
+        return feature_row.reshape(1, -1)
+
+    def predict_risk_score(self, xgb_features: np.ndarray) -> int:
+        estimator = self.model
+        if hasattr(estimator, "predict_proba"):
+            probs = estimator.predict_proba(xgb_features)
+            if isinstance(probs, np.ndarray):
+                if probs.ndim == 2 and probs.shape[1] >= 2:
+                    fraud_probability = float(probs[0][1])
+                else:
+                    fraud_probability = float(probs.ravel()[0])
+            else:
+                fraud_probability = float(probs)
+            return int(np.clip(round(fraud_probability * 100), 0, 100))
+
+        if hasattr(estimator, "predict"):
+            pred = estimator.predict(xgb_features)
+            try:
+                pred_val = float(np.asarray(pred).ravel()[0])
+            except Exception:
+                pred_val = 0.0
+            if pred_val > 1.0:
+                return int(np.clip(round(pred_val), 0, 100))
+            return int(np.clip(round(pred_val * 100), 0, 100))
+
+        raise RuntimeError("Loaded XGBoost estimator does not support predict_proba/predict")
 
 
 def _train_fallback_models() -> None:
@@ -602,7 +784,16 @@ async def load_models(model_dir: str = "/models"):
 
     try:
         import torch
-        from ml.models.graphsage.model import GraphSAGEFraudDetector
+
+        GraphSAGEFraudDetector = None
+        try:
+            from ml.models.graphsage.model import GraphSAGEFraudDetector  # type: ignore[no-redef]
+        except Exception as import_exc:
+            GraphSAGEFraudDetector = _build_fallback_graphsage_class(torch)
+            print(
+                "GraphSAGE class missing in ml.models; using fallback runtime class: "
+                f"{import_exc}"
+            )
 
         gnn_path = os.path.join(model_dir, "graphsage_model.pt")
         if not os.path.exists(gnn_path):
@@ -611,12 +802,44 @@ async def load_models(model_dir: str = "/models"):
                 gnn_path = alt_gnn_path
         if os.path.exists(gnn_path):
             checkpoint = torch.load(gnn_path, map_location="cpu")
+
+            state_dict = None
+            if isinstance(checkpoint, dict):
+                if isinstance(checkpoint.get("model_state_dict"), dict):
+                    state_dict = checkpoint.get("model_state_dict")
+                elif isinstance(checkpoint.get("state_dict"), dict):
+                    state_dict = checkpoint.get("state_dict")
+                elif checkpoint and all(
+                    isinstance(value, torch.Tensor) for value in checkpoint.values()
+                ):
+                    state_dict = checkpoint
+
+            if state_dict is None:
+                raise RuntimeError("GraphSAGE checkpoint does not include a loadable state_dict")
+
+            checkpoint_config = checkpoint.get("config", {}) if isinstance(checkpoint, dict) else {}
+            in_features = int(checkpoint_config.get("in_features", 32))
+            hidden_dim = int(checkpoint_config.get("hidden_dim", 128))
+            out_features = int(checkpoint_config.get("out_features", 64))
+
+            if "lin1.weight" in state_dict:
+                lin1_shape = tuple(state_dict["lin1.weight"].shape)
+                if len(lin1_shape) == 2:
+                    hidden_dim = int(lin1_shape[0])
+                    if lin1_shape[1] % 2 == 0:
+                        in_features = int(lin1_shape[1] // 2)
+
+            if "out.weight" in state_dict:
+                out_shape = tuple(state_dict["out.weight"].shape)
+                if len(out_shape) == 2 and out_shape[1] > 0:
+                    out_features = int(out_shape[1])
+
             loaded_gnn_model = GraphSAGEFraudDetector(
-                in_features=checkpoint.get("config", {}).get("in_features", 32),
-                hidden_dim=checkpoint.get("config", {}).get("hidden_dim", 128),
-                out_features=checkpoint.get("config", {}).get("out_features", 64),
+                in_features=in_features,
+                hidden_dim=hidden_dim,
+                out_features=out_features,
             )
-            loaded_gnn_model.load_state_dict(checkpoint["model_state_dict"])
+            loaded_gnn_model.load_state_dict(state_dict, strict=False)
             loaded_gnn_model.eval()
             gnn_model = loaded_gnn_model
             print("Loaded GraphSAGE model")
@@ -625,8 +848,6 @@ async def load_models(model_dir: str = "/models"):
         print(f"Could not load GNN model: {e}")
 
     try:
-        from ml.models.isolation_forest.model import IsolationForestDetector
-
         if_path = os.path.join(model_dir, "isolation_forest_model.pkl")
         if os.path.exists(if_path):
             import pickle
@@ -639,22 +860,15 @@ async def load_models(model_dir: str = "/models"):
                 if_model = payload.get("model")
                 if_scaler = payload.get("scaler")
             else:
-                if hasattr(payload, "score_to_0_100"):
-                    if_model = payload
-                elif hasattr(payload, "score_samples"):
-                    # Wrap raw sklearn IsolationForest into project adapter.
-                    wrapped_if = IsolationForestDetector()
-                    wrapped_if.model = payload
-                    if_model = wrapped_if
-                else:
-                    if_model = payload
+                if_model = payload
                 if_scaler = None
-            print("Loaded Isolation Forest model")
+
+            if if_model is not None:
+                print("Loaded Isolation Forest model")
     except Exception as e:
         print(f"Could not load IF model: {e}")
 
     try:
-        from ml.models.xgboost_ensemble.model import XGBoostEnsembleScorer
         shap_explainer_cls = None
         try:
             from ml.models.xgboost_ensemble.shap_explainer import SHAPExplainer
@@ -675,33 +889,40 @@ async def load_models(model_dir: str = "/models"):
 
             # Support both direct model pickles and dict-wrapped training artifacts.
             if isinstance(payload, dict):
-                xgb_model = payload.get("model")
+                loaded_xgb = payload.get("model")
                 if shap_explainer is None:
                     shap_explainer = payload.get("shap_explainer")
             else:
-                if hasattr(payload, "prepare_features") and hasattr(payload, "predict_risk_score"):
-                    xgb_model = payload
-                elif hasattr(payload, "predict_proba"):
-                    # Wrap raw xgboost classifier into project adapter.
-                    wrapped_xgb = XGBoostEnsembleScorer()
-                    wrapped_xgb.model = payload
-                    xgb_model = wrapped_xgb
+                loaded_xgb = payload
+
+            if loaded_xgb is not None:
+                if hasattr(loaded_xgb, "prepare_features") and hasattr(
+                    loaded_xgb, "predict_risk_score"
+                ):
+                    xgb_model = loaded_xgb
+                elif hasattr(loaded_xgb, "predict_proba") or hasattr(
+                    loaded_xgb, "predict"
+                ):
+                    xgb_model = _RawXGBClassifierAdapter(loaded_xgb)
                 else:
-                    xgb_model = payload
+                    xgb_model = None
 
             try:
                 if (
-                    shap_explainer is None
+                    xgb_model is not None
+                    and shap_explainer is None
                     and shap_explainer_cls is not None
                     and hasattr(xgb_model, "model")
                 ):
                     shap_explainer = shap_explainer_cls(xgb_model.model)
             except Exception:
                 pass
-            print("Loaded XGBoost model")
 
-            if not _xgb_model_width_compatible():
-                expected = getattr(xgb_model.model, "n_features_in_", None)
+            if xgb_model is not None:
+                print("Loaded XGBoost model")
+
+            if xgb_model is not None and not _xgb_model_width_compatible():
+                expected = _xgb_expected_width()
                 print(
                     "XGBoost model feature width mismatch "
                     f"(artifact={expected}, runtime={RUNTIME_XGB_FEATURE_WIDTH}); "
@@ -820,6 +1041,7 @@ async def score_transaction(
                 default_acct,
                 rule_violations,
             )
+            xgb_features = _align_xgb_features(xgb_features)
             mismatch, expected_width, runtime_width = _xgb_feature_width_mismatch(
                 xgb_features
             )
@@ -827,7 +1049,6 @@ async def score_transaction(
                 raise ValueError(
                     f"XGBoost feature width mismatch (runtime={runtime_width}, expected={expected_width})"
                 )
-            xgb_features = _align_xgb_features(xgb_features)
             risk_score = xgb_model.predict_risk_score(xgb_features)
         except Exception as e:
             print(f"XGBoost scoring error: {e}")
@@ -858,6 +1079,7 @@ async def score_transaction(
                 default_acct,
                 rule_violations,
             )
+            xgb_features = _align_xgb_features(xgb_features)
             mismatch, expected_width, runtime_width = _xgb_feature_width_mismatch(
                 xgb_features
             )
@@ -865,7 +1087,6 @@ async def score_transaction(
                 raise ValueError(
                     f"XGBoost feature width mismatch for SHAP (runtime={runtime_width}, expected={expected_width})"
                 )
-            xgb_features = _align_xgb_features(xgb_features)
             shap_result = shap_explainer.explain(xgb_features)
             shap_top3 = shap_result.get("shap_top3", [])
         except Exception as e:
@@ -932,7 +1153,10 @@ def extract_tx_features(txn: dict) -> list:
 
 @app.on_event("startup")
 async def startup():
-    model_dir = os.getenv("MODEL_DIR", "/models")
+    global active_model_dir
+
+    model_dir = _resolve_model_dir()
+    active_model_dir = model_dir
     await load_models(model_dir)
     if _strict_startup_enabled() and xgb_model is None:
         raise RuntimeError(
@@ -969,6 +1193,7 @@ async def health():
     return {
         "status": "healthy",
         "model_version": model_version,
+        "model_dir": active_model_dir,
         "scoring_mode": _current_scoring_mode(),
         "gnn_loaded": gnn_model is not None,
         "if_loaded": if_model is not None,

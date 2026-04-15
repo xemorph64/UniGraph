@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import signal
 import sys
 import time
@@ -14,6 +15,21 @@ from typing import Any
 
 import httpx
 from confluent_kafka import Consumer, KafkaError
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from backend.app.contracts.transaction_ingest_contract import (  # noqa: E402
+    INGEST_CONTRACT_VERSION,
+)
+from backend.app.contracts.bridge_quality_gate import (  # noqa: E402
+    build_bridge_quality_artifact,
+    evaluate_dropped_invalid_policy,
+)
+from backend.app.contracts.transaction_ingest_payload import (  # noqa: E402
+    normalize_bridge_ingest_payload,
+)
 
 
 @dataclass
@@ -51,6 +67,10 @@ class PipelineBridge:
         reingest_cooldown_seconds: float,
         http_timeout_seconds: float,
         log_level: str,
+        stats_output_file: str | None,
+        max_dropped_invalid: int,
+        max_dropped_invalid_rate: float,
+        dropped_invalid_rate_denominator: str,
     ):
         self.bootstrap_servers = bootstrap_servers
         self.enriched_topic = enriched_topic
@@ -71,6 +91,10 @@ class PipelineBridge:
         self.reingest_cooldown_seconds = max(0.0, reingest_cooldown_seconds)
         self.http_timeout_seconds = max(1.0, http_timeout_seconds)
         self.log_level = log_level.upper()
+        self.stats_output_file = (stats_output_file or "").strip()
+        self.max_dropped_invalid = max_dropped_invalid
+        self.max_dropped_invalid_rate = max_dropped_invalid_rate
+        self.dropped_invalid_rate_denominator = dropped_invalid_rate_denominator
 
         self.running = True
         self.consumer: Consumer | None = None
@@ -100,6 +124,7 @@ class PipelineBridge:
             "messages_total": 0,
             "enriched_seen": 0,
             "rule_seen": 0,
+            "dropped_invalid": 0,
             "ingested": 0,
             "alerts": 0,
             "llm_generated": 0,
@@ -365,7 +390,7 @@ class PipelineBridge:
             return None
 
         amount = self._coerce_float(event.get("amount") or event.get("txn_amount"), 0.0)
-        channel = str(event.get("channel") or "IMPS").strip() or "IMPS"
+        channel = str(event.get("channel") or "IMPS").strip().upper() or "IMPS"
         customer_id = str(event.get("customer_id") or f"CUST-{from_account}")
         description = str(event.get("description") or "CDC transaction")
         device_id = str(
@@ -383,6 +408,7 @@ class PipelineBridge:
         velocity_24h = max(signal_obj.txn_count * 2, velocity_1h)
 
         return {
+            "contract_version": INGEST_CONTRACT_VERSION,
             "txn_id": txn_id,
             "from_account": from_account,
             "to_account": to_account,
@@ -396,6 +422,41 @@ class PipelineBridge:
             "velocity_1h": velocity_1h,
             "velocity_24h": velocity_24h,
         }
+
+    def _validate_ingest_payload(self, payload: dict[str, Any]) -> str | None:
+        normalized, error = normalize_bridge_ingest_payload(payload)
+        if error:
+            return error
+
+        if normalized is None:
+            return "invalid ingest payload"
+
+        payload.update(normalized)
+
+        return None
+
+    def _write_stats_artifact(self, exit_code: int, policy_failures: list[str]) -> bool:
+        if not self.stats_output_file:
+            return True
+
+        artifact = build_bridge_quality_artifact(
+            stats=self.stats,
+            max_dropped_invalid=self.max_dropped_invalid,
+            max_dropped_invalid_rate=self.max_dropped_invalid_rate,
+            rate_denominator=self.dropped_invalid_rate_denominator,
+            policy_failures=policy_failures,
+            exit_code=exit_code,
+        )
+
+        output_path = Path(self.stats_output_file)
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(artifact, indent=2), encoding="utf-8")
+            self._log(f"Wrote bridge stats artifact: {output_path}")
+            return True
+        except Exception as ex:
+            self._log(f"Failed to write bridge stats artifact {output_path}: {ex}", "ERROR")
+            return False
 
     def _upsert_rule_signal(self, rule_msg: dict[str, Any]) -> None:
         account_id = str(rule_msg.get("account_id") or "").strip()
@@ -459,6 +520,15 @@ class PipelineBridge:
             self._log("Skipping enriched message: required fields missing", "DEBUG")
             return
 
+        payload_error = self._validate_ingest_payload(payload)
+        if payload_error:
+            self._inc_stat("dropped_invalid")
+            self._log(
+                f"Skipping enriched message: invalid ingest payload txn={payload.get('txn_id')} reason={payload_error}",
+                "WARN",
+            )
+            return
+
         self.txn_cache[payload["txn_id"]] = payload
         self.latest_txn_by_account[payload["from_account"]] = payload["txn_id"]
 
@@ -488,10 +558,21 @@ class PipelineBridge:
             signal_obj = self._active_signal_for(account_id)
             payload["velocity_1h"] = max(payload.get("velocity_1h", 0), signal_obj.txn_count)
             payload["velocity_24h"] = max(payload.get("velocity_24h", 0), signal_obj.txn_count * 2)
+
+            payload_error = self._validate_ingest_payload(payload)
+            if payload_error:
+                self._inc_stat("dropped_invalid")
+                self._log(
+                    f"Skipping rule reingest: invalid ingest payload txn={payload.get('txn_id')} reason={payload_error}",
+                    "WARN",
+                )
+                return
+
             self.rule_reingest_last_sent[txn_id] = time.time()
             self._enqueue_ingest(payload, reason="rule")
 
     def run(self) -> int:
+        exit_code = 0
         self._install_signal_handlers()
         self.consumer = self._build_consumer()
         self.consumer.subscribe([self.enriched_topic, self.rule_topic])
@@ -555,9 +636,29 @@ class PipelineBridge:
 
             self.executor.shutdown(wait=True)
             self.http.close()
+            policy_failures, drop_rate, dropped_invalid, denominator = evaluate_dropped_invalid_policy(
+                self.stats,
+                max_dropped_invalid=self.max_dropped_invalid,
+                max_dropped_invalid_rate=self.max_dropped_invalid_rate,
+                rate_denominator=self.dropped_invalid_rate_denominator,
+            )
+            if self.max_dropped_invalid >= 0 or self.max_dropped_invalid_rate >= 0:
+                self._log(
+                    "Quality gate observed "
+                    f"dropped_invalid={dropped_invalid} denominator={denominator} "
+                    f"drop_rate={drop_rate:.6f}",
+                    "INFO",
+                )
+
+            for failure in policy_failures:
+                self._log(f"Quality gate failure: {failure}", "ERROR")
+
+            exit_code = 0 if self.stats["errors"] == 0 and not policy_failures else 1
+            if not self._write_stats_artifact(exit_code, policy_failures):
+                exit_code = 1
             self._log(f"Summary: {json.dumps(self.stats)}")
 
-        return 0 if self.stats["errors"] == 0 else 1
+        return exit_code
 
 
 def main() -> None:
@@ -581,7 +682,20 @@ def main() -> None:
     parser.add_argument("--reingest-cooldown-seconds", type=float, default=5.0)
     parser.add_argument("--http-timeout-seconds", type=float, default=10.0)
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARN", "ERROR"])
+    parser.add_argument("--stats-output-file", default="")
+    parser.add_argument("--max-dropped-invalid", type=int, default=-1)
+    parser.add_argument("--max-dropped-invalid-rate", type=float, default=-1.0)
+    parser.add_argument(
+        "--dropped-invalid-rate-denominator",
+        default="enriched_seen",
+        choices=["enriched_seen", "messages_total"],
+    )
     args = parser.parse_args()
+
+    if args.max_dropped_invalid < -1:
+        raise SystemExit("--max-dropped-invalid must be >= -1")
+    if args.max_dropped_invalid_rate < -1.0:
+        raise SystemExit("--max-dropped-invalid-rate must be >= -1")
 
     bridge = PipelineBridge(
         bootstrap_servers=args.bootstrap_servers,
@@ -603,6 +717,10 @@ def main() -> None:
         reingest_cooldown_seconds=args.reingest_cooldown_seconds,
         http_timeout_seconds=args.http_timeout_seconds,
         log_level=args.log_level,
+        stats_output_file=args.stats_output_file,
+        max_dropped_invalid=args.max_dropped_invalid,
+        max_dropped_invalid_rate=args.max_dropped_invalid_rate,
+        dropped_invalid_rate_denominator=args.dropped_invalid_rate_denominator,
     )
     raise SystemExit(bridge.run())
 

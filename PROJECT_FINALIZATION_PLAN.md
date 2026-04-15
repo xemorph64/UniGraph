@@ -1,12 +1,12 @@
 # UniGRAPH Process Finalization Plan (Discussion First)
 
-Status: Draft v0.1 (not final)
+Status: Finalized v1.0 (implementation in progress)
 Owner: Ojas
 Last updated: 2026-04-15
 
 Purpose:
 This document is the single source of truth to stop ad-hoc fixes and lock a stable, phase-wise process.
-We will finalize this only after back-and-forth decisions are captured below.
+All decision rows below are locked and implementation must follow them.
 
 ---
 
@@ -21,38 +21,38 @@ How to use:
 
 | Topic | Question | Your Decision | Owner | Date |
 |---|---|---|---|---|
-| Primary goal | Rank top 3 goals (stability, latency, 1000 tx/sec, explainability, maintainability, demo reliability, deployment readiness) | TBD | TBD | TBD |
-| Non-negotiables | What must never be broken while fixing others? | TBD | TBD | TBD |
-| Scope boundary | What is in scope now, and explicitly out of scope for this cycle? | TBD | TBD | TBD |
-| Deadline | Is there a hard date for a stable release candidate? | TBD | TBD | TBD |
-| Risk tolerance | Prefer fast iteration with some breakage, or slower hardening with strict gates? | TBD | TBD | TBD |
+| Primary goal | Rank top 3 goals (stability, latency, 1000 tx/sec, explainability, maintainability, demo reliability, deployment readiness) | 1) Fraud-detection correctness, 2) Low-latency E2E performance, 3) Stability and reliability | Ojas | 2026-04-15 |
+| Non-negotiables | What must never be broken while fixing others? | Ingestion -> graph database -> rules + machine learning evaluation -> display on frontend | Ojas | 2026-04-15 |
+| Scope boundary | What is in scope now, and explicitly out of scope for this cycle? | In scope: full CDC -> Kafka -> Flink -> bridge -> backend -> Neo4j -> frontend path with strict ML+rules, latency/recall gates, observability, rollback drill. Out of scope: new model architecture changes, UI redesign, Kubernetes production rollout. | Ojas | 2026-04-15 |
+| Deadline | Is there a hard date for a stable release candidate? | Today | Ojas | 2026-04-15 |
+| Risk tolerance | Prefer fast iteration with some breakage, or slower hardening with strict gates? | Slower hardening with strict gates (end-to-end working, no in-between process skipped) | Ojas | 2026-04-15 |
 
 ### Round 2: Architecture and Cleanup Decisions
 
 | Topic | Question | Your Decision | Owner | Date |
 |---|---|---|---|---|
-| Canonical path | Confirm single ingest path to optimize first (CDC -> Kafka -> Flink -> bridge -> backend -> Neo4j) | TBD | TBD | TBD |
-| Deprecations | Which duplicate scripts/jobs/endpoints should be removed now? | TBD | TBD | TBD |
-| Docs policy | Keep only essential docs and auto-generated runbooks? | TBD | TBD | TBD |
-| Feature flags | Which high-throughput flags stay permanent vs temporary? | TBD | TBD | TBD |
-| Alert policy | Keep alerts on in throughput tests, or disable for clean baseline? | TBD | TBD | TBD |
+| Canonical path | Confirm single ingest path to optimize first (CDC(Debezium) -> Kafka -> Flink -> bridge -> backend -> Neo4j) | Yes. Full workflow is mandatory with both ML and rules evaluation included. | Ojas | 2026-04-15 |
+| Deprecations | Which duplicate scripts/jobs/endpoints should be removed now? | Deprecate scripts/ingest_sql_transactions.py, scripts/seed_graph.py, scripts/sync_550.py with integrity checks before removal. | Ojas | 2026-04-15 |
+| Docs policy | Keep only essential docs and auto-generated runbooks? | Yes. Keep canonical runbook and archive non-canonical docs. | Ojas | 2026-04-15 |
+| Feature flags | Which high-throughput flags stay permanent vs temporary? | High-throughput flags are benchmark-only. Release validation must disable throughput shortcuts and require ML. | Ojas | 2026-04-15 |
+| Alert policy | Keep alerts on in throughput tests, or disable for clean baseline? | Keep alerts on. Fraudulent transaction detection is the core feature. | Ojas | 2026-04-15 |
 
 ### Round 3: Quality Gates
 
 | Topic | Question | Your Decision | Owner | Date |
 |---|---|---|---|---|
-| Perf gate | Target throughput and latency gate for pass/fail (for example p95 <= X ms at Y tx/sec) | TBD | TBD | TBD |
-| Reliability gate | What pass criteria are required (for example 0 data loss, retry budget, no partials)? | TBD | TBD | TBD |
-| Test gate | Minimum test suite before merge (unit, integration, e2e, smoke)? | TBD | TBD | TBD |
-| Rollback gate | What rollback path must be validated each release? | TBD | TBD | TBD |
-| Observability gate | Required dashboards and alerts before sign-off? | TBD | TBD | TBD |
+| Perf gate | Target throughput and latency gate for pass/fail (for example p95 <= X ms at Y tx/sec) | End-to-end p95 <= 300ms and p99 <= 600ms at 5k tx/sec sustained for 10 minutes. | Ojas | 2026-04-15 |
+| Reliability gate | What pass criteria are required (for example 0 data loss, retry budget, no partials)? | No data loss/partials, no orphan graph entities, and both ML+rules executed per transaction in release-validation profile. | Ojas | 2026-04-15 |
+| Test gate | Minimum test suite before merge (unit, integration, e2e, smoke)? | E2E is mandatory, with targeted unit tests for strict profile behavior. | Ojas | 2026-04-15 |
+| Rollback gate | What rollback path must be validated each release? | One-command revert to last known stable compose tag plus post-rollback data integrity check. | Ojas | 2026-04-15 |
+| Observability gate | Required dashboards and alerts before sign-off? | Mandatory: p95/p99 latency and error alerts, Kafka/Flink lag visibility, ML scoring-mode/fallback metric, and per-run end-to-end trace artifact. | Ojas | 2026-04-15 |
 
 ### Final Lock
 
 When all rows above are filled, mark:
-- Decision freeze approved: [ ]
-- Process finalization approved: [ ]
-- Scope freeze approved: [ ]
+- Decision freeze approved: [x]
+- Process finalization approved: [x]
+- Scope freeze approved: [x]
 
 ---
 
@@ -203,10 +203,11 @@ Meeting outputs each week:
 
 ---
 
-## 5) Open Decisions (Current)
+## 5) Closed Decisions (Locked 2026-04-15)
 
-1. Final target definition: is the hard target 1000 tx/sec sustained with p95 under what threshold?
-2. Throughput mode policy: benchmark-only or production-safe mode?
-3. Alert generation policy during perf tests: on or off?
-4. Primary benchmark command set to declare pass/fail.
-5. Exact list of components to deprecate in this cycle.
+1. Hard target: end-to-end p95 <= 300ms and p99 <= 600ms at 5k tx/sec sustained for 10 minutes.
+2. Throughput mode policy: benchmark-only, never used as release sign-off evidence.
+3. Alert generation policy during perf tests: alerts remain enabled.
+4. Primary pass/fail path: CDC path (Postgres -> Debezium -> Kafka -> Flink -> bridge -> backend -> Neo4j -> frontend).
+5. Deprecation list this cycle: scripts/ingest_sql_transactions.py, scripts/seed_graph.py, scripts/sync_550.py.
+6. Dataset policy: do not use dataset_550.sql or dataset_550_normal_txns.sql for active validation; use dataset_100_interconnected_txns.sql and dataset_200_interconnected_txns.sql.

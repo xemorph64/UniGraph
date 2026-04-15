@@ -1,6 +1,8 @@
 import asyncio
+import pytest
 
-from backend.app.services.fraud_scorer import fraud_scorer
+from backend.app.config import settings
+from backend.app.services.fraud_scorer import fraud_scorer, MLScoringRequiredError
 
 
 def test_structuring_rule_is_flagged_for_near_ctr_amount():
@@ -88,3 +90,28 @@ def test_primary_fraud_type_is_none_when_no_typology_rules_fire():
 
     assert result["rule_violations"] == []
     assert result["primary_fraud_type"] is None
+
+
+def test_strict_ml_mode_raises_when_ml_result_unavailable(monkeypatch):
+    async def fake_ml_service(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(fraud_scorer, "_score_with_ml_service", fake_ml_service)
+    monkeypatch.setattr(settings, "SCORER_REQUIRE_ML", True)
+    monkeypatch.setattr(settings, "HIGH_THROUGHPUT_MODE", False)
+    monkeypatch.setattr(settings, "HIGH_THROUGHPUT_RULE_ONLY", False)
+
+    txn = {
+        "txn_id": "TXN-STRICT-001",
+        "from_account": "ACC-STRICT-001",
+        "to_account": "ACC-STRICT-002",
+        "amount": 250000.0,
+        "channel": "IMPS",
+        "velocity_1h": 4,
+        "velocity_24h": 8,
+        "is_dormant": False,
+        "device_account_count": 2,
+    }
+
+    with pytest.raises(MLScoringRequiredError):
+        asyncio.run(fraud_scorer.score_transaction(txn))

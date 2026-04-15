@@ -1737,7 +1737,7 @@ unigraph/
 │   └── frontend/
 │
 └── scripts/
-    ├── seed_graph.py               # Load synthetic data into Neo4j
+  ├── seed_graph.py               # Deprecated (disabled); use canonical ingest datasets 100/200
     ├── simulate_transactions.py    # Load test transaction generator
     ├── generate_str_report.py      # Test STR generation
     ├── dr-failover-test.sh         # NEW: DR testing

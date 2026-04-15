@@ -1,3 +1,7 @@
+-- DEPRECATED FOR ACTIVE VALIDATION.
+-- Use dataset_100_interconnected_txns.sql or dataset_200_interconnected_txns.sql.
+-- ============================================================
+--
 -- ============================================================
 -- NORMAL TRANSACTIONS (500 transactions)
 -- ============================================================

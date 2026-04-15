@@ -1,29 +1,26 @@
+#!/usr/bin/env python3
+"""Deprecated compatibility wrapper.
+
+This script previously inserted synthetic graph nodes directly into Neo4j.
+It is intentionally disabled because active validation must use canonical
+ingest + scoring paths.
+
+Use one of these instead:
+  1) scripts/ingest_transactions_input_sql.py --dataset 100
+  2) scripts/ingest_transactions_input_sql.py --dataset 200
+  3) scripts/demo_seeder.py (demo-only setup)
+"""
+
 from __future__ import annotations
 
-import argparse
-from neo4j import GraphDatabase
 
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Seed synthetic graph data into Neo4j")
-    parser.add_argument("--neo4j-uri", default="bolt://localhost:7687")
-    parser.add_argument("--neo4j-user", default="neo4j")
-    parser.add_argument("--neo4j-password", default="unigraph_dev")
-    parser.add_argument("--accounts", type=int, default=100)
-    args = parser.parse_args()
-
-    driver = GraphDatabase.driver(args.neo4j_uri, auth=(args.neo4j_user, args.neo4j_password))
-    with driver.session() as session:
-        session.run(
-            """
-            UNWIND range(1, $n) AS i
-            MERGE (:Account {id: 'ACC-SEED-' + toString(i)})
-            """,
-            n=args.accounts,
-        ).consume()
-    driver.close()
-    print(f"Seeded {args.accounts} Account nodes")
+def main() -> int:
+    print(
+        "seed_graph.py is deprecated and disabled. "
+        "Use canonical ingest scripts for dataset 100/200, or demo_seeder.py for demo mode."
+    )
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

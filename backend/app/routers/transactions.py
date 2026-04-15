@@ -1,14 +1,19 @@
 from typing import Optional
 from fastapi import APIRouter, Query, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import asyncio
 import uuid
 from datetime import datetime
 import time
 
 from ..services.neo4j_service import neo4j_service
-from ..services.fraud_scorer import fraud_scorer
+from ..services.fraud_scorer import fraud_scorer, MLScoringRequiredError
 from ..config import settings
+from ..contracts.transaction_ingest_contract import (
+    INGEST_CONTRACT_VERSION,
+    SUPPORTED_INGEST_CHANNELS,
+)
+from ..contracts.transaction_ingest_payload import TransactionIngestPayload
 from .ws import manager
 
 router = APIRouter()
@@ -90,44 +95,13 @@ class TransactionResponse(BaseModel):
     scoring_mode: Optional[str] = None
 
 
-class TransactionIngest(BaseModel):
-    txn_id: Optional[str] = None
-    from_account: str
-    to_account: str
-    amount: float
-    channel: str = "IMPS"
-    customer_id: Optional[str] = None
-    description: Optional[str] = "Transfer"
-    device_id: Optional[str] = None
-    is_dormant: bool = False
-    device_account_count: int = 1
-    velocity_1h: int = 0
-    velocity_24h: int = 0
-    account_age_days: Optional[int] = None
-    kyc_tier: Optional[int] = None
-    transaction_count_30d: Optional[int] = None
-    avg_txn_amount_30d: Optional[float] = None
-    device_count_30d: Optional[int] = None
-    ip_count_30d: Optional[int] = None
-    customer_age: Optional[float] = None
-    avg_monthly_balance: Optional[float] = None
-    avg_txn_amount: Optional[float] = None
-    std_txn_amount: Optional[float] = None
-    max_txn_amount: Optional[float] = None
-    min_txn_amount: Optional[float] = None
-    hour_of_day: Optional[int] = None
-    day_of_week: Optional[int] = None
-    is_weekend: Optional[bool] = None
-    is_holiday: Optional[bool] = None
-    geo_distance_from_home: Optional[float] = None
-    device_risk_flag: Optional[bool] = None
-    counterparty_risk_score: Optional[float] = None
-    is_international: Optional[bool] = None
-    channel_switch_count: Optional[int] = None
-    amount_zscore: Optional[float] = None
+class TransactionIngest(TransactionIngestPayload):
+    pass
 
 
 class BatchTransactionIngestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     items: list[TransactionIngest]
 
 
@@ -136,7 +110,7 @@ def _alerts_enabled() -> bool:
 
 
 def _prepare_ingest_txn_dict(txn: TransactionIngest) -> dict:
-    txn_dict = txn.dict()
+    txn_dict = txn.model_dump()
     txn_dict["txn_id"] = (
         txn_dict.get("txn_id") or f"TXN-{uuid.uuid4().hex[:12].upper()}"
     )
@@ -183,7 +157,11 @@ async def ingest_transaction(txn: TransactionIngest):
     """Ingest a transaction and run fraud scoring pipeline."""
     txn_dict = _prepare_ingest_txn_dict(txn)
 
-    score_result = await fraud_scorer.score_transaction(txn_dict)
+    try:
+        score_result = await fraud_scorer.score_transaction(txn_dict)
+    except MLScoringRequiredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     txn_dict["risk_score"] = score_result["risk_score"]
     txn_dict["rule_violations"] = score_result["rule_violations"]
     txn_dict["primary_fraud_type"] = score_result.get("primary_fraud_type")
@@ -287,7 +265,11 @@ async def ingest_transactions_batch(batch: BatchTransactionIngestRequest):
     async def _score_one(txn: TransactionIngest) -> tuple[dict, dict]:
         async with semaphore:
             txn_dict = _prepare_ingest_txn_dict(txn)
-            score_result = await fraud_scorer.score_transaction(txn_dict)
+            try:
+                score_result = await fraud_scorer.score_transaction(txn_dict)
+            except MLScoringRequiredError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+
             txn_dict["risk_score"] = score_result["risk_score"]
             txn_dict["rule_violations"] = score_result["rule_violations"]
             txn_dict["primary_fraud_type"] = score_result.get("primary_fraud_type")

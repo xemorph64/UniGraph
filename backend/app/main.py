@@ -61,11 +61,52 @@ def _validate_non_demo_configuration() -> None:
         )
 
 
+def _validate_runtime_profile_configuration() -> None:
+    profile = settings.RUNTIME_PROFILE.strip().lower()
+    allowed_profiles = {"standard", "release_validation", "benchmark"}
+
+    if profile not in allowed_profiles:
+        raise RuntimeError(
+            "RUNTIME_PROFILE must be one of: standard, release_validation, benchmark"
+        )
+
+    if settings.SCORER_REQUIRE_ML and settings.HIGH_THROUGHPUT_RULE_ONLY:
+        raise RuntimeError(
+            "SCORER_REQUIRE_ML=true cannot be combined with HIGH_THROUGHPUT_RULE_ONLY=true"
+        )
+
+    if profile == "release_validation":
+        invalid = []
+        if settings.HIGH_THROUGHPUT_MODE:
+            invalid.append("HIGH_THROUGHPUT_MODE=false")
+        if settings.HIGH_THROUGHPUT_RULE_ONLY:
+            invalid.append("HIGH_THROUGHPUT_RULE_ONLY=false")
+        if settings.HIGH_THROUGHPUT_SKIP_GRAPH_FEATURES:
+            invalid.append("HIGH_THROUGHPUT_SKIP_GRAPH_FEATURES=false")
+        if not settings.SCORER_REQUIRE_ML:
+            invalid.append("SCORER_REQUIRE_ML=true")
+        if invalid:
+            raise RuntimeError(
+                "release_validation profile requires: " + ", ".join(invalid)
+            )
+
+    if profile == "benchmark":
+        if not settings.HIGH_THROUGHPUT_MODE:
+            raise RuntimeError(
+                "benchmark profile requires HIGH_THROUGHPUT_MODE=true"
+            )
+        if settings.SCORER_REQUIRE_ML:
+            raise RuntimeError(
+                "benchmark profile is throughput-only; set SCORER_REQUIRE_ML=false"
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("unigraph_starting", env=settings.APP_ENV)
     gds_scheduler_task: asyncio.Task | None = None
     env_name = settings.APP_ENV.strip().lower()
+    _validate_runtime_profile_configuration()
     _validate_non_demo_configuration()
     try:
         await neo4j_service.connect()
@@ -197,8 +238,16 @@ async def health(response: Response):
         overall_status = "healthy"
         response.status_code = 200
     elif neo4j_ok:
-        overall_status = "degraded"
-        response.status_code = 200
+        strict_ml_required = (
+            settings.SCORER_REQUIRE_ML
+            or settings.RUNTIME_PROFILE.strip().lower() == "release_validation"
+        )
+        if strict_ml_required:
+            overall_status = "unhealthy"
+            response.status_code = 503
+        else:
+            overall_status = "degraded"
+            response.status_code = 200
     else:
         overall_status = "unhealthy"
         response.status_code = 503
@@ -209,6 +258,8 @@ async def health(response: Response):
         "neo4j": "connected" if neo4j_ok else "disconnected",
         "graph_stats": stats,
         "fraud_scoring": ml_readiness,
+        "runtime_profile": settings.RUNTIME_PROFILE,
+        "scorer_require_ml": settings.SCORER_REQUIRE_ML,
         "demo_mode": settings.DEMO_MODE,
     }
 

@@ -1,0 +1,230 @@
+{
+  "dataset": "transactions_dataset.csv",
+  "rows": 10000,
+  "fraud_count": 506,
+  "fraud_ratio": 0.0506,
+  "current_model": {
+    "at_threshold_0_50": {
+      "threshold": 0.5,
+      "accuracy": 0.9494,
+      "balanced_accuracy": 0.5,
+      "roc_auc": 0.5,
+      "pr_auc": 0.0506,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "confusion_matrix": {
+        "tn": 9494,
+        "fp": 0,
+        "fn": 506,
+        "tp": 0
+      }
+    },
+    "at_threshold_0_60": {
+      "threshold": 0.6,
+      "accuracy": 0.9494,
+      "balanced_accuracy": 0.5,
+      "roc_auc": 0.5,
+      "pr_auc": 0.0506,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "confusion_matrix": {
+        "tn": 9494,
+        "fp": 0,
+        "fn": 506,
+        "tp": 0
+      }
+    },
+    "best_f1_scan": {
+      "threshold": 0.0,
+      "precision": 0.0506,
+      "recall": 1.0,
+      "f1": 0.09632590900437846,
+      "confusion_matrix": {
+        "tn": 0,
+        "fp": 9494,
+        "fn": 0,
+        "tp": 506
+      }
+    },
+    "score_distribution": {
+      "min": 0.0,
+      "p50": 0.0,
+      "p90": 0.0,
+      "p99": 0.0,
+      "max": 0.0
+    }
+  },
+  "dataset_existing_scores": {
+    "ml_score_col_at_threshold_0_50": {
+      "threshold": 0.5,
+      "accuracy": 0.496,
+      "balanced_accuracy": 0.49040958674960927,
+      "roc_auc": 0.48740175821467435,
+      "pr_auc": 0.04933005051291428,
+      "precision": 0.048765923566878984,
+      "recall": 0.4841897233201581,
+      "f1": 0.08860759493670886,
+      "confusion_matrix": {
+        "tn": 4715,
+        "fp": 4779,
+        "fn": 261,
+        "tp": 245
+      }
+    },
+    "risk_score_col_at_threshold_0_60": {
+      "threshold": 0.6,
+      "accuracy": 0.5933,
+      "balanced_accuracy": 0.5163945858045564,
+      "roc_auc": 0.5157506384310957,
+      "pr_auc": 0.05371920312767602,
+      "precision": 0.05454090567925945,
+      "recall": 0.4308300395256917,
+      "f1": 0.096824339329336,
+      "confusion_matrix": {
+        "tn": 5715,
+        "fp": 3779,
+        "fn": 288,
+        "tp": 218
+      }
+    }
+  },
+  "synthetic_dataset_current_model": {
+    "dataset": "ml/data/synthetic/synthetic_dataset.csv",
+    "rows": 1010,
+    "fraud_count": 10,
+    "fraud_ratio": 0.009900990099009901,
+    "at_threshold_0_50": {
+      "threshold": 0.5,
+      "accuracy": 0.9900990099009901,
+      "balanced_accuracy": 0.5,
+      "roc_auc": 0.5,
+      "pr_auc": 0.009900990099009901,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "confusion_matrix": {
+        "tn": 1000,
+        "fp": 0,
+        "fn": 10,
+        "tp": 0
+      }
+    },
+    "at_threshold_0_60": {
+      "threshold": 0.6,
+      "accuracy": 0.9900990099009901,
+      "balanced_accuracy": 0.5,
+      "roc_auc": 0.5,
+      "pr_auc": 0.009900990099009901,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "confusion_matrix": {
+        "tn": 1000,
+        "fp": 0,
+        "fn": 10,
+        "tp": 0
+      }
+    },
+    "best_f1_scan": {
+      "threshold": 0.0,
+      "precision": 0.009900990099009901,
+      "recall": 1.0,
+      "f1": 0.0196078431372549,
+      "confusion_matrix": {
+        "tn": 0,
+        "fp": 1000,
+        "fn": 0,
+        "tp": 10
+      }
+    },
+    "score_distribution": {
+      "min": 0.0,
+      "p50": 0.0,
+      "p90": 0.0,
+      "p99": 0.0,
+      "max": 0.0
+    }
+  },
+  "backend_fraud_endpoint_eval": {
+    "dataset": "transactions_dataset.csv",
+    "rows": 10000,
+    "fraud_count": 506,
+    "fraud_ratio": 0.0506,
+    "status_counts": {
+      "200": 10000
+    },
+    "scoring_mode_counts": {
+      "full_ml": 9996,
+      "backend_rule_fallback": 4
+    },
+    "at_threshold_0_50": {
+      "threshold": 0.5,
+      "accuracy": 0.9494,
+      "balanced_accuracy": 0.5,
+      "roc_auc": 0.4948972348668724,
+      "pr_auc": 0.05012501080247615,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "confusion_matrix": {
+        "tn": 9494,
+        "fp": 0,
+        "fn": 506,
+        "tp": 0
+      }
+    },
+    "at_threshold_0_60": {
+      "threshold": 0.6,
+      "accuracy": 0.9494,
+      "balanced_accuracy": 0.5,
+      "roc_auc": 0.4948972348668724,
+      "pr_auc": 0.05012501080247615,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "confusion_matrix": {
+        "tn": 9494,
+        "fp": 0,
+        "fn": 506,
+        "tp": 0
+      }
+    },
+    "at_threshold_0_80": {
+      "threshold": 0.8,
+      "accuracy": 0.9494,
+      "balanced_accuracy": 0.5,
+      "roc_auc": 0.4948972348668724,
+      "pr_auc": 0.05012501080247615,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "confusion_matrix": {
+        "tn": 9494,
+        "fp": 0,
+        "fn": 506,
+        "tp": 0
+      }
+    },
+    "best_f1_scan": {
+      "threshold": 0.0,
+      "precision": 0.0506,
+      "recall": 1.0,
+      "f1": 0.09632590900437846,
+      "confusion_matrix": {
+        "tn": 0,
+        "fp": 9494,
+        "fn": 0,
+        "tp": 506
+      }
+    },
+    "score_distribution": {
+      "min": 0.0,
+      "p50": 0.0,
+      "p90": 0.02,
+      "p99": 0.02,
+      "max": 0.08
+    }
+  }
+}

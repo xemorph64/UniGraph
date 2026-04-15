@@ -6,6 +6,8 @@ Apply the settings below in repository settings for `main` and `develop`.
 ## Required status checks
 
 - `backend-tests`
+- `ingest-contract-integrity`
+- `phase1-integrity`
 - `approval-route-tests`
 - `frontend-build`
 - `lint-python`

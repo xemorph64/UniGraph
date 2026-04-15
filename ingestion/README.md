@@ -102,3 +102,35 @@ Backend ingest benchmark (HTTP ingest API):
 /home/ojasbhalerao/Documents/Uni/.venv/bin/python scripts/benchmark_backend_ingest.py --url http://localhost:8000/api/v1/transactions/ingest --count 10000 --concurrency 256 --timeout 8
 /home/ojasbhalerao/Documents/Uni/.venv/bin/python scripts/benchmark_backend_ingest.py --url http://localhost:8000/api/v1/transactions/ingest/batch --count 20000 --batch-size 200 --concurrency 32 --timeout 8
 ```
+
+## 6) Strict Replay Quality Gate
+
+For release-validation replay runs, fail fast if malformed payload drops exceed policy.
+
+Run bridge with stats artifact + thresholds:
+
+```bash
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python ingestion/neo4j_writer.py \
+	--bootstrap-servers localhost:19092 \
+	--backend-url http://localhost:8000/api/v1 \
+	--max-messages 2000 \
+	--stats-output-file ingestion/strict-replay-bridge-stats.json \
+	--max-dropped-invalid 0 \
+	--max-dropped-invalid-rate 0.0 \
+	--dropped-invalid-rate-denominator enriched_seen
+```
+
+Verify artifact explicitly (can be run in CI or post-run checks):
+
+```bash
+/home/ojasbhalerao/Documents/Uni/.venv/bin/python scripts/verify_strict_replay_artifact.py \
+	--stats-file ingestion/strict-replay-bridge-stats.json \
+	--max-dropped-invalid 0 \
+	--max-dropped-invalid-rate 0.0 \
+	--dropped-invalid-rate-denominator enriched_seen
+```
+
+Threshold notes:
+
+- Use `0` / `0.0` for fail-closed strict validation.
+- Use `-1` to disable an individual threshold.

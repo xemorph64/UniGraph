@@ -1,3 +1,7 @@
+-- DEPRECATED FOR ACTIVE VALIDATION.
+-- Use dataset_100_interconnected_txns.sql or dataset_200_interconnected_txns.sql.
+-- ============================================================
+--
 -- ============================================================
 -- UniGraph AI — Large Scale Test Dataset
 -- 550 Transactions: 500 Normal + 50 Fraudulent (10 per scenario)

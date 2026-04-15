@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unigraph.local/contracts/transaction-ingest-contract.json",
+  "title": "UniGRAPH Transaction Ingest Contract",
+  "description": "Versioned payload contract for /api/v1/transactions/ingest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "from_account",
+    "to_account",
+    "amount",
+    "channel"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "txn-ingest-v1"
+    },
+    "txn_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "from_account": {
+      "type": "string",
+      "minLength": 1
+    },
+    "to_account": {
+      "type": "string",
+      "minLength": 1
+    },
+    "amount": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "channel": {
+      "type": "string",
+      "enum": [
+        "IMPS",
+        "UPI",
+        "NEFT",
+        "RTGS",
+        "SWIFT",
+        "CASH",
+        "CARD",
+        "ATM",
+        "INTERNAL",
+        "ACH",
+        "NACH",
+        "NETBANKING",
+        "MOBILE",
+        "WALLET"
+      ]
+    },
+    "customer_id": {
+      "type": ["string", "null"]
+    },
+    "description": {
+      "type": ["string", "null"]
+    },
+    "device_id": {
+      "type": ["string", "null"]
+    },
+    "is_dormant": {
+      "type": "boolean"
+    },
+    "device_account_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "velocity_1h": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "velocity_24h": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "account_age_days": {
+      "type": ["integer", "null"]
+    },
+    "kyc_tier": {
+      "type": ["integer", "null"]
+    },
+    "transaction_count_30d": {
+      "type": ["integer", "null"]
+    },
+    "avg_txn_amount_30d": {
+      "type": ["number", "null"]
+    },
+    "device_count_30d": {
+      "type": ["integer", "null"]
+    },
+    "ip_count_30d": {
+      "type": ["integer", "null"]
+    },
+    "customer_age": {
+      "type": ["number", "null"]
+    },
+    "avg_monthly_balance": {
+      "type": ["number", "null"]
+    },
+    "avg_txn_amount": {
+      "type": ["number", "null"]
+    },
+    "std_txn_amount": {
+      "type": ["number", "null"]
+    },
+    "max_txn_amount": {
+      "type": ["number", "null"]
+    },
+    "min_txn_amount": {
+      "type": ["number", "null"]
+    },
+    "hour_of_day": {
+      "type": ["integer", "null"]
+    },
+    "day_of_week": {
+      "type": ["integer", "null"]
+    },
+    "is_weekend": {
+      "type": ["boolean", "null"]
+    },
+    "is_holiday": {
+      "type": ["boolean", "null"]
+    },
+    "geo_distance_from_home": {
+      "type": ["number", "null"]
+    },
+    "device_risk_flag": {
+      "type": ["boolean", "null"]
+    },
+    "counterparty_risk_score": {
+      "type": ["number", "null"]
+    },
+    "is_international": {
+      "type": ["boolean", "null"]
+    },
+    "channel_switch_count": {
+      "type": ["integer", "null"]
+    },
+    "amount_zscore": {
+      "type": ["number", "null"]
+    }
+  }
+}

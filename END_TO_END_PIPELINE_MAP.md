@@ -43,6 +43,11 @@ Important operational detail:
 Primary files:
 
 - fraud_scenarios.sql
+- dataset_100_interconnected_txns.sql
+- dataset_200_interconnected_txns.sql
+
+Deprecated for active validation (do not use):
+
 - dataset_550.sql
 - dataset_550_normal_txns.sql
 
@@ -437,6 +442,7 @@ Contracts:
 - contracts/enforcement-api.yaml
 - contracts/ml-scoring-protocol.json
 - contracts/neo4j-schema.json
+- contracts/transaction-ingest-contract.json
 
 Runtime schema in Neo4j:
 
@@ -455,7 +461,8 @@ This defines constraints/indexes for Account, Transaction, Alert, Case, STRRepor
 
 ### Legacy or compatibility utilities (still present)
 
-- scripts/ingest_sql_transactions.py (legacy guard requires --allow-legacy)
+- scripts/ingest_sql_transactions.py (deprecated and disabled; use scripts/ingest_transactions_input_sql.py --dataset 100|200)
+- scripts/seed_graph.py (deprecated and disabled; use canonical ingest path or scripts/demo_seeder.py for demo-only setup)
 - scripts/simulate_transactions.py (legacy guard requires --allow-legacy)
 - Older utility verify_pipeline_integrity.py was removed during cleanup; use ingestion/verify_db_ingestion.py and ingestion/verify_e2e_ingestion.py for current validation.
 

@@ -7,6 +7,26 @@ on:
     branches: [develop]
 
 jobs:
+  ingest-contract-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify transaction ingest contract integrity
+        run: python scripts/verify_ingest_contract_integrity.py
+
+  phase1-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify phase1 deprecations and dataset policy
+        run: python scripts/verify_phase1_deprecations.py
+
   backend-tests:
     runs-on: ubuntu-latest
     steps:

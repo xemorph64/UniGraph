@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from fastapi import HTTPException, Response
 
+from backend.app.config import settings
 from backend.app.main import health
 from backend.app.routers import accounts, alerts, reports, transactions
 
@@ -212,4 +213,27 @@ def test_health_is_healthy_when_neo4j_and_ml_ok(monkeypatch):
 
     assert response.status_code == 200
     assert payload["status"] == "healthy"
+    assert payload["neo4j"] == "connected"
+
+
+def test_health_is_unhealthy_when_ml_unreachable_in_strict_mode(monkeypatch):
+    async def fake_graph_stats():
+        return {"total_accounts": 10}
+
+    async def fake_ml_readiness():
+        return {
+            "ml_service_reachable": False,
+            "ml_service_url": "http://localhost:8002",
+            "fallback_mode_available": True,
+        }
+
+    monkeypatch.setattr("backend.app.main.neo4j_service.get_graph_stats", fake_graph_stats)
+    monkeypatch.setattr("backend.app.main.fraud_scorer.get_ml_readiness", fake_ml_readiness)
+    monkeypatch.setattr(settings, "SCORER_REQUIRE_ML", True)
+
+    response = Response()
+    payload = asyncio.run(health(response))
+
+    assert response.status_code == 503
+    assert payload["status"] == "unhealthy"
     assert payload["neo4j"] == "connected"

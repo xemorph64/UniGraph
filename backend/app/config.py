@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     JWT_EXPIRY_MINUTES: int = 480
 
     ML_SERVICE_URL: str = "http://localhost:8002"
+    RUNTIME_PROFILE: str = "standard"
+    SCORER_REQUIRE_ML: bool = False
 
     SCORER_ML_TIMEOUT_SECONDS: float = 1.5
     SCORER_ML_MAX_CONNECTIONS: int = 400
