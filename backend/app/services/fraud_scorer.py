@@ -221,11 +221,20 @@ class FraudScorer:
     ) -> dict:
         ml_score = max(0, min(100, int(round(float(ml_result.get("xgboost_risk_score", 0))))))
 
-        # Blend learned score with deterministic rule signals to preserve typology explainability.
-        risk_score = min(100, round(ml_score * 0.8 + rule_based_score * 0.2))
+        # Blend learned score with deterministic rule signals.
+        # We increase the rule weight significantly to prevent 
+        # ML false negatives from suppressing strong rule-based signals.
+        risk_score = min(100, round(ml_score * 0.3 + rule_based_score * 0.7))
 
-        # If deterministic rules already indicate an alert-worthy pattern,
-        # preserve that floor even when ML predicts lower risk.
+        # If deterministic rules already indicate an elevated risk, 
+        # ensure the final score stays above the decision threshold.
+        if rule_based_score >= 50:
+            risk_score = max(risk_score, rule_based_score)
+        elif rule_based_score >= 40:
+            # For near-threshold rules, ensure they stay close to the threshold
+            risk_score = max(risk_score, 45)
+        
+        # Preserve the alert floor (60) if rules fired.
         if rule_violations and rule_based_score >= 60:
             risk_score = max(risk_score, rule_based_score)
 
@@ -239,6 +248,7 @@ class FraudScorer:
             ),
             "xgboost_risk_score": ml_score,
             "shap_top3": list(ml_result.get("shap_top3") or shap_contributions[:3]),
+            "feature_contributions": ml_result.get("feature_contributions", {}),
             "model_version": str(ml_result.get("model_version", "ml-service-unknown")),
             "scoring_mode": str(ml_result.get("scoring_mode", "full_ml")),
             "scoring_timestamp": str(
@@ -261,6 +271,7 @@ class FraudScorer:
             "if_anomaly_score": min(risk_score / 120, 1.0),
             "xgboost_risk_score": risk_score,
             "shap_top3": shap_contributions[:3],
+            "feature_contributions": {},
             "model_version": "unigraph-demo-v1.0",
             "scoring_mode": "backend_rule_fallback",
             "scoring_timestamp": datetime.now(timezone.utc).isoformat().replace(
@@ -446,6 +457,7 @@ class FraudScorer:
             if_anomaly_score = blended["if_anomaly_score"]
             xgboost_risk_score = blended["xgboost_risk_score"]
             shap_top3 = blended["shap_top3"]
+            feature_contributions = blended["feature_contributions"]
             model_version = blended["model_version"]
             scoring_mode = blended["scoring_mode"]
             scoring_timestamp = blended["scoring_timestamp"]
@@ -468,6 +480,7 @@ class FraudScorer:
             if_anomaly_score = fallback["if_anomaly_score"]
             xgboost_risk_score = fallback["xgboost_risk_score"]
             shap_top3 = fallback["shap_top3"]
+            feature_contributions = fallback["feature_contributions"]
             model_version = fallback["model_version"]
             scoring_mode = fallback["scoring_mode"]
             scoring_timestamp = fallback["scoring_timestamp"]
@@ -487,6 +500,7 @@ class FraudScorer:
             "gnn_fraud_probability": gnn_fraud_probability,
             "if_anomaly_score": if_anomaly_score,
             "xgboost_risk_score": xgboost_risk_score,
+            "feature_contributions": feature_contributions,
             "model_version": model_version,
             "scoring_mode": scoring_mode,
             "scoring_timestamp": scoring_timestamp,

@@ -12,11 +12,16 @@ from ..config import settings
 logger = structlog.get_logger()
 
 STR_NARRATIVE_PROMPT = """You are UniGRAPH's AML investigation assistant for Union Bank of India.
-You analyze suspicious transaction patterns and generate FIU-IND compliant STR narratives.
-Always be professional, specific, and cite transaction IDs and amounts.
-Respond in formal banking compliance language.
+Analyze the provided transaction patterns and generate a professional STR narrative.
 
-Generate a Suspicious Transaction Report (STR) narrative for the following case:
+STRICT GUIDELINES:
+1. ONLY use data explicitly provided in the context below.
+2. DO NOT invent account names, branch details, or transaction histories.
+3. If a specific data point (like SHAP reasons) is missing, do not guess it.
+4. Maintain a formal, neutral tone. No speculation.
+5. Reference specific Transaction IDs and exact amounts.
+
+Generate a Suspicious Transaction Report (STR) narrative:
 
 Case ID: {case_id}
 Flagged Account: {account_id}

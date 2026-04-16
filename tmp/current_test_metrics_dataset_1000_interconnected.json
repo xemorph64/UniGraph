@@ -1,0 +1,152 @@
+{
+  "system_metadata": {
+    "version": "v4.1-elite-prototype",
+    "status": "PROTOTYPE_READY"
+  },
+  "statistical_intelligence": {
+    "roc_auc": 0.9476,
+    "brier_score": 0.0881,
+    "optimal_threshold": 0.3,
+    "max_mcc": 0.8471,
+    "max_f1": 0.9249
+  },
+  "global_feature_analytics": {
+    "txn_velocity": {
+      "importance_weight": 0.393,
+      "avg_contribution_score": 0.2522
+    },
+    "amount_outlier": {
+      "importance_weight": 0.3119,
+      "avg_contribution_score": 0.2002
+    },
+    "graph_risk": {
+      "importance_weight": 0.2149,
+      "avg_contribution_score": 0.1379
+    },
+    "channel_risk": {
+      "importance_weight": 0.0802,
+      "avg_contribution_score": 0.0515
+    }
+  },
+  "segment_resilience": {
+    "NEFT": {
+      "count": 210,
+      "roc_auc": 0.8512,
+      "reliability_index": 0.8552
+    },
+    "RTGS": {
+      "count": 160,
+      "roc_auc": 0.9546,
+      "reliability_index": 0.92
+    },
+    "UPI": {
+      "count": 450,
+      "roc_auc": 0.9789,
+      "reliability_index": 0.9295
+    },
+    "IMPS": {
+      "count": 180,
+      "roc_auc": 0.9641,
+      "reliability_index": 0.9267
+    }
+  },
+  "business_impact_pro": {
+    "net_loss_mitigation_inr": 2370000,
+    "investigation_overhead_inr": 12750,
+    "total_business_roi_index": 185.87,
+    "detection_coverage": "94.8%"
+  },
+  "strategic_threshold_matrix": {
+    "0.20": {
+      "accuracy": 0.841,
+      "precision": 0.7619,
+      "recall": 0.992,
+      "f1": 0.8619,
+      "mcc": 0.7154,
+      "confusion_matrix": {
+        "tp": 496,
+        "fp": 155,
+        "tn": 345,
+        "fn": 4
+      }
+    },
+    "0.30": {
+      "accuracy": 0.923,
+      "precision": 0.9029,
+      "recall": 0.948,
+      "f1": 0.9249,
+      "mcc": 0.8471,
+      "confusion_matrix": {
+        "tp": 474,
+        "fp": 51,
+        "tn": 449,
+        "fn": 26
+      }
+    },
+    "0.40": {
+      "accuracy": 0.896,
+      "precision": 0.9195,
+      "recall": 0.868,
+      "f1": 0.893,
+      "mcc": 0.7932,
+      "confusion_matrix": {
+        "tp": 434,
+        "fp": 38,
+        "tn": 462,
+        "fn": 66
+      }
+    },
+    "0.50": {
+      "accuracy": 0.896,
+      "precision": 0.9195,
+      "recall": 0.868,
+      "f1": 0.893,
+      "mcc": 0.7932,
+      "confusion_matrix": {
+        "tp": 434,
+        "fp": 38,
+        "tn": 462,
+        "fn": 66
+      }
+    },
+    "0.60": {
+      "accuracy": 0.866,
+      "precision": 0.9178,
+      "recall": 0.804,
+      "f1": 0.8571,
+      "mcc": 0.7377,
+      "confusion_matrix": {
+        "tp": 402,
+        "fp": 36,
+        "tn": 464,
+        "fn": 98
+      }
+    },
+    "0.70": {
+      "accuracy": 0.847,
+      "precision": 0.9141,
+      "recall": 0.766,
+      "f1": 0.8335,
+      "mcc": 0.7033,
+      "confusion_matrix": {
+        "tp": 383,
+        "fp": 36,
+        "tn": 464,
+        "fn": 117
+      }
+    },
+    "0.80": {
+      "accuracy": 0.811,
+      "precision": 0.906,
+      "recall": 0.694,
+      "f1": 0.786,
+      "mcc": 0.6398,
+      "confusion_matrix": {
+        "tp": 347,
+        "fp": 36,
+        "tn": 464,
+        "fn": 153
+      }
+    }
+  }
+}

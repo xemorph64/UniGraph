@@ -36,37 +36,37 @@ class PythonRuleEvaluator:
         round_trip_marker = "ROUND_TRIP" in description
 
         if amount > 500000:
-            risk_score += 20
-            shap_contributions.append(f"high_amount_₹{amount / 100000:.1f}L: +20")
+            risk_score += 25
+            shap_contributions.append(f"high_amount_₹{amount / 100000:.1f}L: +25")
         elif amount > 100000:
-            risk_score += 10
-            shap_contributions.append(f"elevated_amount_₹{amount / 100000:.1f}L: +10")
+            risk_score += 15
+            shap_contributions.append(f"elevated_amount_₹{amount / 100000:.1f}L: +15")
 
         if velocity_1h >= 5:
-            risk_score += 25
+            risk_score += 35
             rule_violations.append("RAPID_LAYERING")
-            shap_contributions.append(f"velocity_1h_{velocity_1h}_txns: +25")
+            shap_contributions.append(f"velocity_1h_{velocity_1h}_txns: +35")
         elif velocity_1h >= 3:
-            risk_score += 12
-            shap_contributions.append(f"elevated_velocity_1h_{velocity_1h}: +12")
+            risk_score += 20
+            shap_contributions.append(f"elevated_velocity_1h_{velocity_1h}: +20")
 
         # High-value transfers moving with bursty velocity indicate layering.
-        if amount >= 500000 and velocity_1h >= 2 and not is_dormant:
-            risk_score += 40
+        if amount >= 100000 and velocity_1h >= 2 and not is_dormant:
+            risk_score += 30
             if "RAPID_LAYERING" not in rule_violations:
                 rule_violations.append("RAPID_LAYERING")
             shap_contributions.append(
-                f"high_value_multi_hop_velocity_1h_{velocity_1h}: +40"
+                f"high_value_multi_hop_velocity_1h_{velocity_1h}: +30"
             )
 
         if 800000 <= amount <= 990000:
-            risk_score += 22
+            risk_score += 25
             rule_violations.append("STRUCTURING")
-            shap_contributions.append("amount_near_ctr_threshold: +22")
+            shap_contributions.append("amount_near_ctr_threshold: +25")
 
         # Smurfing signal for repeated sub-threshold transfers in a day.
-        if 40000 <= amount < 50000 and velocity_24h >= 3:
-            structuring_boost = min(65, 24 + max(0, velocity_24h - 3) * 9)
+        if 30000 <= amount < 50000 and velocity_24h >= 2:
+            structuring_boost = min(70, 30 + max(0, velocity_24h - 2) * 12)
             risk_score += structuring_boost
             if "STRUCTURING" not in rule_violations:
                 rule_violations.append("STRUCTURING")
